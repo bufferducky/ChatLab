@@ -180,7 +180,7 @@ test('desktop updater workflows', async (t) => {
     assert.equal(harness.getQuitCalls(), 0)
     assert.deepEqual(harness.autoUpdater.feedUrls.at(-1), {
       provider: 'github',
-      owner: 'ChatLab',
+      owner: 'bufferducky',
       repo: 'ChatLab',
     })
   })
@@ -196,7 +196,7 @@ test('desktop updater workflows', async (t) => {
     })
 
     assert.equal(harness.dialogCalls.at(-1)?.title, 'update.requiredUpdateFailedTitle')
-    assert.deepEqual(harness.externalUrls, ['https://github.com/ChatLab/ChatLab/releases'])
+    assert.deepEqual(harness.externalUrls, ['https://github.com/bufferducky/ChatLab/releases'])
     assert.equal(harness.getQuitCalls(), 1)
   })
 

@@ -17,7 +17,7 @@ import {
 type AppWithQuitFlag = typeof app & { isQuiting?: boolean }
 
 const appWithQuitFlag = app as AppWithQuitFlag
-const OFFICIAL_RELEASES_URL = 'https://github.com/ChatLab/ChatLab/releases'
+const OFFICIAL_RELEASES_URL = 'https://github.com/bufferducky/ChatLab/releases'
 
 let isFirstShow = true
 let isManualCheck = false
@@ -272,7 +272,7 @@ async function checkRequiredUpdateWithFallback() {
     return await autoUpdater.checkForUpdates()
   } catch (error) {
     if (!(error instanceof Error) || !isUpdateNetworkError(error)) throw error
-    logger.warn('[Update] Required update check failed on R2 mirror; retrying with GitHub')
+    logger.warn('[Update] Required update check failed; retrying GitHub')
     switchToGitHubUpdateSource()
     return await autoUpdater.checkForUpdates()
   }

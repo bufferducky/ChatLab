@@ -12,6 +12,21 @@
 
 </div>
 
+## 个人二开计划：QQ、微信、Telegram 自动消息中心
+
+这是 [bufferducky 的个人 Fork](https://github.com/bufferducky/ChatLab)，基于 [ChatLab 上游项目](https://github.com/ChatLab/ChatLab) 持续开发。目标是在保留消息查看、检索与 AI 分析的基础上，自动收集选定的 QQ、微信、Telegram 会话，生成每天可阅读的群聊摘要。
+
+计划逐步完成：
+
+- 通过现有 Pull/Push 导入接口连接 QQ、微信、Telegram 独立采集器。
+- 增加账号与群选择、采集状态、增量进度、失败重试和历史补采。
+- 保留原始消息及来源标识，支持重复导入去重和摘要证据回溯。
+- 增加按群、跨群的 AI 定时汇总，以及按日期查看的每日简报。
+
+**当前状态：方案规划与基础体验阶段，自动采集、定时简报尚未实现。** 首个本地 macOS 试用包使用 **ChatLab Personal** 名称及本 Fork 的 GitHub 更新源，供体验现有上游功能；三平台自动化将在后续改动中逐步实现。
+
+保留上游 AGPL-3.0 许可证及署名。账号凭据、API Key、真实聊天数据不得提交到仓库。以下继续保留上游项目介绍。
+
 ChatLab 是一个专注于聊天记录分析的本地化应用。通过 AI Agent和灵活的 SQL 引擎，你可以自由地分析你的聊天记录数据。
 
 目前已支持：**WhatsApp、LINE、QQ、Discord、Instagram、Telegram、iMessage、Google Chat**。即将支持：Messenger、KakaoTalk。

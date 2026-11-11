@@ -1,13 +1,16 @@
 # 应用程序的唯一标识符
-appId: com.chatlab.fun
+appId: io.github.bufferducky.chatlab
 # 应用程序的产品名称
-productName: ChatLab
+productName: ChatLab Personal
+extraMetadata:
+  name: chatlab-personal
+  productName: ChatLab Personal
 # 打包完成后使用目标 Electron 真实加载本地 embedding 运行时，避免只检查 package.json。
 afterPack: scripts/verify-packaged-local-runtime.mjs
 # 发布配置
 publish:
   provider: github
-  owner: ChatLab
+  owner: bufferducky
   repo: ChatLab
 # 构建资源所在的目录
 directories:
@@ -89,11 +92,11 @@ mac:
     # 架构由 CI 通过 --arm64 指定；macOS Desktop 不再发布 Intel 版本
     - target: dmg
     - target: zip
-  artifactName: ChatLab-${version}-${arch}.${ext}
+  artifactName: ChatLab-Personal-${version}-${arch}.${ext}
 
 # macOS 平台的 DMG 配置
 dmg:
-  artifactName: ChatLab-${version}-${arch}.${ext}
+  artifactName: ChatLab-Personal-${version}-${arch}.${ext}
 
 # 是否在构建之前重新编译原生模块。
 # macOS 继续由 electron-builder 重建共享 better-sqlite3；Windows 最终运行时使用

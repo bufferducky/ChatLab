@@ -2,13 +2,6 @@ import { autoUpdater } from 'electron-updater'
 import { logger } from '../logger'
 import { getActiveProxyUrl } from '../network/proxy'
 
-const R2_MIRROR_URL = 'https://chatlab.1app.top/releases/download'
-
-type UpdateSource = 'github' | 'r2'
-
-let currentSource: UpdateSource = 'r2'
-let hasTriedFallback = false
-
 export function configureUpdateProxy(): void {
   const proxyUrl = getActiveProxyUrl()
 
@@ -23,42 +16,20 @@ export function configureUpdateProxy(): void {
 }
 
 export function resetToDefaultSource(): void {
-  hasTriedFallback = false
-  switchToR2Mirror()
+  switchToGitHubUpdateSource()
 }
 
 export function handleUpdateError(error: Error): void {
-  logger.error(`[Update] Update error (${currentSource}): ${error.message || error}`)
-
-  if (currentSource !== 'r2' || hasTriedFallback || !isUpdateNetworkError(error)) return
-
-  hasTriedFallback = true
-  logger.info('[Update] R2 mirror failed, trying GitHub fallback...')
-  switchToGitHubUpdateSource()
-
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((retryError) => {
-      logger.error(`[Update] GitHub fallback check also failed: ${retryError}`)
-    })
-  }, 1000)
-}
-
-function switchToR2Mirror(): void {
-  currentSource = 'r2'
-  autoUpdater.setFeedURL({
-    provider: 'generic',
-    url: R2_MIRROR_URL,
-  })
+  logger.error(`[Update] GitHub update error: ${error.message || error}`)
 }
 
 export function switchToGitHubUpdateSource(): void {
-  currentSource = 'github'
   autoUpdater.setFeedURL({
     provider: 'github',
-    owner: 'ChatLab',
+    owner: 'bufferducky',
     repo: 'ChatLab',
   })
-  logger.info('[Update] Switched to GitHub fallback source')
+  logger.info('[Update] Using personal fork GitHub update source')
 }
 
 export function isUpdateNetworkError(error: Error): boolean {

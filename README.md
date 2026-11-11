@@ -12,6 +12,21 @@ English | [简体中文](./README.zh-CN.md)
 
 </div>
 
+## Personal fork: automated QQ, WeChat and Telegram collection
+
+This is [bufferducky's personal fork](https://github.com/bufferducky/ChatLab) of [ChatLab](https://github.com/ChatLab/ChatLab). The goal is to build a local message workspace that collects selected QQ, WeChat and Telegram conversations automatically and produces daily AI digests, while retaining ChatLab's message browsing, search and analysis.
+
+Planned work:
+
+- Connect separate QQ, WeChat and Telegram collectors through ChatLab's existing Pull/Push import interfaces.
+- Add account and group selection, collector status, incremental checkpoints, retry and history backfill.
+- Keep raw messages and source identifiers so imports can be retried and summaries can link back to their evidence.
+- Add scheduled per-group and cross-group digests with a daily reading view.
+
+**Current status:** planning and baseline evaluation. Automatic collection and scheduled digests are not implemented yet. The initial local macOS build is named **ChatLab Personal** and uses this fork's GitHub update source. Existing upstream features are available for evaluation; QQ/WeChat/Telegram automation will be added in later changes.
+
+The upstream AGPL-3.0 license and attribution are retained. Never commit account credentials, API keys or real chat data to this repository. The upstream project overview follows below.
+
 ChatLab is an open-source desktop app for understanding your social conversations. It combines a flexible SQL engine with AI agents so you can explore patterns, ask better questions, and extract insights from chat data, all on your own machine.
 
 Currently supported: **WhatsApp, LINE, QQ, Discord, Instagram, Telegram, iMessage, and Google Chat**. Coming next: **Messenger and KakaoTalk**.
