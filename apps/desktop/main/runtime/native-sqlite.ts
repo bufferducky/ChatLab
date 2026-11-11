@@ -7,7 +7,7 @@
  * copy at apps/desktop/native/better_sqlite3.node (prepared by
  * scripts/ensure-native.mjs).
  *
- * Windows packaged apps ship the desktop-owned binding at
+ * macOS and Windows packaged apps ship the desktop-owned binding at
  * resources/native/better_sqlite3.node and load it explicitly. Other packaged
  * platforms can still fall back to electron-builder's rebuilt node_modules copy.
  *
