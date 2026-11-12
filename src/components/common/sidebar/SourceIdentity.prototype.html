@@ -1,0 +1,1305 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ChatLab · 会话来源辨识原型</title>
+    <!-- Throwaway UI prototype: one proposed sidebar and conversation-header treatment.
+     Question: can users distinguish and filter QQ / WeCom without renaming chats?
+     All records below are illustrative. No production data, requests or persistence.
+     Run: python3 -m http.server 4318 --bind 127.0.0.1 (repository root). -->
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f6f8;
+        --surface: #fff;
+        --soft: #f8f9fb;
+        --hover: #f3f4f7;
+        --line: #e7e9ef;
+        --ink: #242835;
+        --sub: #626b7b;
+        --muted: #788294;
+        --accent: #ce4266;
+        --accent-bg: #fdf0f3;
+        --accent-hover: #b73557;
+        --qq: #245dc3;
+        --qq-bg: #edf3ff;
+        --wecom: #17754f;
+        --wecom-bg: #eaf6ef;
+        --avatar: #eff1f5;
+        --shadow: 0 12px 40px #17243b12;
+        --focus: #b73557;
+        --font: 'Geist', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        --mono: 'SFMono-Regular', Consolas, monospace;
+        --radius: 8px;
+        --text-xs: 11px;
+        --text-sm: 12px;
+        --text-base: 14px;
+        --text-lg: 20px;
+      }
+      :root.dark {
+        color-scheme: dark;
+        --bg: #15161c;
+        --surface: #1c1e25;
+        --soft: #20232b;
+        --hover: #272b35;
+        --line: #303541;
+        --ink: #f1f2f6;
+        --sub: #bbc1cf;
+        --muted: #a0a9bc;
+        --accent: #f07b9a;
+        --accent-bg: #3a2631;
+        --accent-hover: #ffa0b9;
+        --qq: #98b9ff;
+        --qq-bg: #24334e;
+        --wecom: #83d8ae;
+        --wecom-bg: #20392d;
+        --avatar: #2a2e38;
+        --focus: #f07b9a;
+        --shadow: 0 12px 40px #0003;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: var(--text-base)/1.5 var(--font);
+        font-optical-sizing: auto;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        background: none;
+        color: inherit;
+      }
+      button:hover {
+        background: var(--hover);
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.65;
+      }
+      button:disabled:active {
+        transform: none;
+      }
+      :focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 3px;
+      }
+      svg {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        vertical-align: middle;
+      }
+      .icon {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .prototype-bar {
+        height: 47px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 26px;
+        border-bottom: 1px solid var(--line);
+        font-size: var(--text-sm);
+        color: var(--sub);
+      }
+      .prototype-bar strong {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .prototype-bar .right {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+      .theme {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 10px;
+        font-size: 12px;
+        background: var(--surface);
+      }
+      .app {
+        height: calc(100vh - 91px);
+        min-height: 650px;
+        max-width: 1560px;
+        margin: auto;
+        display: grid;
+        grid-template-columns: 328px minmax(0, 1fr);
+        background: var(--surface);
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        min-height: 0;
+      }
+      .brand {
+        height: 74px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 10px 22px 0;
+      }
+      .brand img {
+        width: 27px;
+        height: 27px;
+      }
+      .brand-name {
+        font-size: 25px;
+        font-weight: 750;
+        letter-spacing: -0.8px;
+        color: var(--accent);
+      }
+      .version {
+        font-size: 11px;
+        color: var(--muted);
+        margin-left: 2px;
+      }
+      .brand .layout-icon {
+        margin-left: auto;
+        color: var(--sub);
+      }
+      .global-nav {
+        padding: 9px 14px 17px;
+        display: grid;
+        gap: 3px;
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-line {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        height: 35px;
+        padding: 0 12px;
+        color: var(--sub);
+        font-weight: 500;
+      }
+      .nav-line svg {
+        width: 19px;
+      }
+      .nav-line:first-child {
+        color: var(--ink);
+      }
+      .filters {
+        padding: 17px 17px 8px;
+      }
+      .type-tabs {
+        display: flex;
+        gap: 24px;
+        height: 33px;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 14px;
+      }
+      .type-tabs button {
+        font-size: 13px;
+        color: var(--sub);
+        padding: 0 2px 10px;
+        position: relative;
+      }
+      .type-tabs button.active {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .type-tabs button.active:after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -1px;
+        height: 2px;
+        background: var(--accent);
+      }
+      .type-tabs .actions {
+        display: flex;
+        gap: 10px;
+        margin-left: auto;
+        color: var(--muted);
+      }
+      .type-tabs .actions svg {
+        width: 16px;
+      }
+      .sources {
+        display: grid;
+        grid-template-columns: 1.14fr 0.85fr 1fr;
+        gap: 5px;
+        margin-bottom: 12px;
+      }
+      .source-chip {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+        align-items: center;
+        height: 31px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--sub);
+        white-space: nowrap;
+      }
+      .source-chip .num {
+        font-size: 11px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .source-chip.active {
+        border-color: var(--ink);
+        color: var(--ink);
+        background: var(--soft);
+        font-weight: 600;
+      }
+      .source-chip[data-source='qq'].active {
+        border-color: var(--qq);
+        background: var(--qq-bg);
+        color: var(--qq);
+      }
+      .source-chip[data-source='wecom'].active {
+        border-color: var(--wecom);
+        background: var(--wecom-bg);
+        color: var(--wecom);
+      }
+      .source-chip svg {
+        width: 13px;
+        height: 13px;
+      }
+      .search {
+        border: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 7px;
+        padding: 7px 10px;
+        color: var(--muted);
+        background: var(--soft);
+      }
+      .search:focus-within {
+        border-color: var(--accent);
+      }
+      .search svg {
+        width: 16px;
+        height: 16px;
+      }
+      .search input {
+        min-width: 0;
+        width: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--ink);
+        font-size: 12px;
+      }
+      .search input::placeholder {
+        color: var(--muted);
+      }
+      .list-label {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 22px 8px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .session-list {
+        overflow: auto;
+        padding: 0 9px 10px;
+        flex: 1;
+        scrollbar-width: thin;
+      }
+      .session-row {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        text-align: left;
+        gap: 11px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        position: relative;
+        margin-bottom: 2px;
+      }
+      .session-row[aria-current='true'] {
+        background: var(--accent-bg);
+      }
+      .session-row[aria-current='true']:before {
+        content: '';
+        position: absolute;
+        left: 0;
+        width: 3px;
+        height: 26px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+      .avatar {
+        height: 37px;
+        width: 37px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        border-radius: 10px;
+        background: var(--avatar);
+        color: var(--sub);
+        font-size: 17px;
+        font-weight: 500;
+      }
+      .session-row[aria-current='true'] .avatar {
+        background: var(--surface);
+        color: var(--accent);
+      }
+      .session-body {
+        min-width: 0;
+        flex: 1;
+      }
+      .session-title {
+        font-size: 13px;
+        font-weight: 550;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--ink);
+        margin-bottom: 5px;
+        line-height: 1.2;
+      }
+      .session-row[aria-current='true'] .session-title {
+        color: var(--accent);
+      }
+      .session-meta {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .platform-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 18px;
+        padding: 0 5px;
+        border-radius: 4px;
+      }
+      .platform-badge svg {
+        width: 11px;
+        height: 11px;
+      }
+      .platform-badge.qq {
+        background: var(--qq-bg);
+        color: var(--qq);
+      }
+      .platform-badge.wecom {
+        background: var(--wecom-bg);
+        color: var(--wecom);
+      }
+      .sidebar-footer {
+        height: 51px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        color: var(--sub);
+      }
+      .sidebar-footer button {
+        border-radius: 5px;
+        padding: 5px 3px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .sidebar-footer svg {
+        width: 14px;
+        height: 14px;
+      }
+      .sidebar-footer .small-note {
+        color: var(--muted);
+      }
+      main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        overflow: hidden;
+      }
+      .chat-header {
+        padding: 27px 34px 0;
+        flex-shrink: 0;
+      }
+      .chat-heading {
+        display: flex;
+        align-items: flex-start;
+        gap: 13px;
+      }
+      .chat-avatar {
+        height: 44px;
+        width: 44px;
+        border-radius: 12px;
+        background: var(--accent-bg);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+        font-size: 20px;
+      }
+      h1 {
+        font-size: 22px;
+        line-height: 1.3;
+        margin: 0 0 7px;
+        font-weight: 650;
+        letter-spacing: -0.4px;
+      }
+      .heading-info {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--sub);
+        font-size: 11px;
+        flex-wrap: wrap;
+      }
+      .heading-info .platform-badge {
+        font-size: 11px;
+        line-height: 21px;
+        padding: 0 7px;
+      }
+      .separator {
+        color: var(--line);
+      }
+      .source-link {
+        margin-left: auto;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        white-space: nowrap;
+      }
+      .source-link svg {
+        width: 14px;
+        height: 14px;
+      }
+      .chat-tabs {
+        display: flex;
+        gap: 25px;
+        margin-top: 28px;
+        height: 39px;
+        border-bottom: 1px solid var(--line);
+        color: var(--sub);
+        font-size: 13px;
+      }
+      .chat-tab {
+        display: flex;
+        align-items: flex-start;
+        gap: 7px;
+        height: 39px;
+        padding: 0 1px 12px;
+      }
+      .chat-tab svg {
+        width: 16px;
+        height: 16px;
+        margin-top: 2px;
+      }
+      .chat-tab.active {
+        color: var(--accent);
+        border-bottom: 2px solid var(--accent);
+        font-weight: 600;
+      }
+      .records-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin: 20px 34px 15px;
+      }
+      .records-toolbar .search {
+        max-width: 360px;
+        width: 100%;
+        background: var(--surface);
+        padding: 9px 11px;
+      }
+      .scope-note {
+        font-size: 11px;
+        color: var(--muted);
+        margin-left: auto;
+        white-space: nowrap;
+      }
+      .record-head {
+        display: grid;
+        grid-template-columns: 70px 165px minmax(0, 1fr);
+        gap: 14px;
+        padding: 11px 20px;
+        margin: 0 34px;
+        background: var(--soft);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        font-size: 11px;
+        color: var(--sub);
+      }
+      .records {
+        padding: 0 34px 24px;
+        overflow: auto;
+        flex: 1;
+      }
+      .date-line {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 22px 4px 12px;
+        font-size: 11px;
+        color: var(--sub);
+      }
+      .date-line:after {
+        content: '';
+        height: 1px;
+        background: var(--line);
+        flex: 1;
+      }
+      .date-line strong {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .record {
+        display: grid;
+        grid-template-columns: 70px 165px minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+        padding: 17px 20px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .record time {
+        font: 11px/1.8 var(--mono);
+        color: var(--muted);
+      }
+      .sender {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--sub);
+        font-size: 12px;
+      }
+      .mini-avatar {
+        width: 25px;
+        height: 25px;
+        background: var(--avatar);
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        color: var(--sub);
+        flex-shrink: 0;
+      }
+      .message {
+        line-height: 1.85;
+        color: var(--ink);
+      }
+      .message p {
+        margin: 0;
+      }
+      .message .quote {
+        padding: 7px 11px;
+        border-left: 2px solid var(--line);
+        background: var(--soft);
+        margin-top: 9px;
+        color: var(--sub);
+        font-size: 11px;
+      }
+      .attachment {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 10px 13px;
+        max-width: 265px;
+        margin-top: 9px;
+      }
+      .attachment svg {
+        color: var(--accent);
+        width: 21px;
+        height: 21px;
+      }
+      .attachment small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .empty {
+        padding: 35px 15px;
+        text-align: center;
+        font-size: 12px;
+        color: var(--sub);
+      }
+      .empty button {
+        color: var(--accent);
+        margin-top: 12px;
+        padding: 6px 10px;
+        border-radius: 5px;
+        border: 1px solid var(--line);
+      }
+      .chat-footer {
+        height: 38px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 34px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .design-note {
+        height: 44px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 35px;
+        font-size: 11px;
+        color: var(--sub);
+      }
+      .design-note b {
+        font: 10px var(--mono);
+        color: var(--accent);
+        margin-right: 8px;
+      }
+      .source-panel {
+        position: absolute;
+        right: 20px;
+        top: 78px;
+        width: 320px;
+        max-width: calc(100% - 24px);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        z-index: 10;
+        padding: 20px;
+      }
+      .source-panel[hidden] {
+        display: none;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 17px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .panel-header button {
+        padding: 3px;
+        border-radius: 5px;
+      }
+      .source-panel dl {
+        margin: 0;
+        font-size: 12px;
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 12px 4px;
+      }
+      .source-panel dt {
+        color: var(--sub);
+      }
+      .source-panel dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .panel-footer {
+        margin-top: 18px;
+        padding-top: 13px;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        color: var(--sub);
+        line-height: 1.8;
+      }
+      .panel-source {
+        margin-top: 10px;
+        width: 100%;
+        text-align: left;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .panel-source small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .prototype-state {
+        color: var(--sub);
+      }
+      .mobile-back {
+        display: none;
+      }
+      .prototype-state code {
+        font: 11px var(--mono);
+      }
+      @media (min-width: 1500px) {
+        .app {
+          border-left: 1px solid var(--line);
+          border-right: 1px solid var(--line);
+        }
+      }
+      @media (max-width: 1050px) {
+        .app {
+          grid-template-columns: 302px minmax(0, 1fr);
+        }
+        .chat-header {
+          padding: 27px 24px 0;
+        }
+        .records-toolbar {
+          margin: 20px 24px 15px;
+        }
+        .records {
+          padding: 0 24px 24px;
+        }
+        .record-head {
+          margin: 0 24px;
+        }
+        .record-head,
+        .record {
+          grid-template-columns: 58px 105px minmax(0, 1fr);
+          gap: 10px;
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+        .scope-note {
+          display: none;
+        }
+        .source-link {
+          font-size: 11px;
+        }
+        .heading-info {
+          gap: 5px;
+        }
+        .prototype-state {
+          display: none;
+        }
+      }
+      @media (max-width: 760px) {
+        .app {
+          grid-template-columns: 100%;
+          min-height: 650px;
+        }
+        .sidebar {
+          border-right: 0;
+        }
+        .app main {
+          display: none;
+        }
+        .app.detail .sidebar {
+          display: none;
+        }
+        .app.detail main {
+          display: flex;
+        }
+        .mobile-back {
+          display: block;
+          padding: 3px;
+          margin: 0 0 12px;
+          color: var(--sub);
+          font-size: 12px;
+        }
+        .chat-heading {
+          flex-wrap: wrap;
+        }
+        .source-link {
+          margin-left: 0;
+        }
+        .chat-header {
+          padding-top: 20px;
+        }
+        .prototype-bar {
+          padding: 0 16px;
+        }
+        .prototype-bar .right {
+          gap: 10px;
+        }
+        .design-note {
+          gap: 15px;
+          font-size: 10px;
+        }
+        .record-head,
+        .record {
+          grid-template-columns: 52px 76px minmax(0, 1fr);
+          gap: 8px;
+          padding: 12px 0;
+        }
+        .sender {
+          font-size: 11px;
+        }
+        .mini-avatar {
+          display: none;
+        }
+        .session-row {
+          padding-top: 12px;
+          padding-bottom: 12px;
+        }
+        .source-panel {
+          right: 12px;
+          top: 120px;
+        }
+        .records-toolbar .search {
+          max-width: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+      }
+      @media (prefers-contrast: more) {
+        :root {
+          --line: #8b91a0;
+          --muted: #565e6d;
+        }
+        :root.dark {
+          --line: #818a9f;
+          --muted: #c2c8d6;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="search" viewBox="0 0 24 24">
+          <circle cx="10.5" cy="10.5" r="7.2" />
+          <path d="m16 16 5 5" />
+        </symbol>
+        <symbol id="plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16" /></symbol>
+        <symbol id="chat" viewBox="0 0 24 24">
+          <path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+          <path d="M7 10h.1M12 10h.1M17 10h.1" />
+        </symbol>
+        <symbol id="chart" viewBox="0 0 24 24">
+          <path d="M3 4h18M5 4v14h14V4M12 18v4M7 22h10M8 14l3-4 3 2 3-5" />
+        </symbol>
+        <symbol id="users" viewBox="0 0 24 24">
+          <circle cx="9" cy="7" r="3" />
+          <path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 14c2 1 3 2 3 5v2" />
+        </symbol>
+        <symbol id="panel" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M9 3v18" />
+        </symbol>
+        <symbol id="work" viewBox="0 0 24 24">
+          <rect x="3" y="7" width="18" height="14" rx="2" />
+          <path d="M8 7V3h8v4M3 12a22 22 0 0 0 18 0M10 12h4v4h-4z" />
+        </symbol>
+        <symbol id="qq" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M21.395 15.035a40 40 0 0 0-.803-2.264l-1.079-2.695c.001-.032.014-.562.014-.836C19.526 4.632 17.351 0 12 0S4.474 4.632 4.474 9.241c0 .274.013.804.014.836l-1.08 2.695a39 39 0 0 0-.802 2.264c-1.021 3.283-.69 4.643-.438 4.673c.54.065 2.103-2.472 2.103-2.472c0 1.469.756 3.387 2.394 4.771c-.612.188-1.363.479-1.845.835c-.434.32-.379.646-.301.778c.343.578 5.883.369 7.482.189c1.6.18 7.14.389 7.483-.189c.078-.132.132-.458-.301-.778c-.483-.356-1.233-.646-1.846-.836c1.637-1.384 2.393-3.302 2.393-4.771c0 0 1.563 2.537 2.103 2.472c.251-.03.581-1.39-.438-4.673"
+          />
+        </symbol>
+        <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></symbol>
+        <symbol id="sort" viewBox="0 0 24 24"><path d="M3 5h13M3 10h9M3 15h5M18 8v13m-4-4 4 4 4-4" /></symbol>
+        <symbol id="folder" viewBox="0 0 24 24"><path d="M3 8V5h7l2 3h9v12H3z" /></symbol>
+        <symbol id="info" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 10v7M12 7v.1" />
+        </symbol>
+        <symbol id="file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5zM14 3v6h5M8 13h8M8 17h6" /></symbol>
+        <symbol id="link" viewBox="0 0 24 24">
+          <path
+            d="m10 13 4-4M8 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0M16 8l2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0"
+            transform="translate(2 0) scale(.85)"
+          />
+        </symbol>
+      </defs>
+    </svg>
+    <header class="prototype-bar">
+      <span>
+        <strong>ChatLab</strong>
+        / 会话来源辨识
+      </span>
+      <div class="right">
+        <span>交互原型 · 示例数据</span>
+        <button class="theme" id="theme">切换深色</button>
+      </div>
+    </header>
+    <div class="app" id="app">
+      <aside class="sidebar" aria-label="会话导航">
+        <div class="brand">
+          <img
+            src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB2ZXJzaW9uPSIxLjEiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjgyMCIgaGVpZ2h0PSI4MjAiPgo8ZyBpZD0iYnViYmxlIj4KPHBhdGggZD0iTTAgMCBDNC41NDg4NzExNSAtMC4xNzkwNDUzNiA5LjA2ODYwNTI3IC0wLjA4NzE2NzcgMTMuNjEzNzY5NTMgMC4xMDkzNzUgQzE0LjY3MDE1NjI1IDAuMTUwNDYzODcgMTUuNzI2NTQyOTcgMC4xOTE1NTI3MyAxNi44MTQ5NDE0MSAwLjIzMzg4NjcyIEM4My42OTc4OTE3NiAzLjA1MjE5MDkgMTQ2LjkxOTk2NTYxIDI2LjIyMjMzNjg3IDE5OC42MTM3Njk1MyA2OS4xMDkzNzUgQzE5OS4yMTY0MDYyNSA2OS42MDkwNDc4NSAxOTkuODE5MDQyOTcgNzAuMTA4NzIwNyAyMDAuNDM5OTQxNDEgNzAuNjIzNTM1MTYgQzIwNy42MTk5NjQ0IDc2LjYyMTIwNzg1IDIxNC41Nzg4MTY1NiA4Mi44NTIzMTcwOCAyMjEuMzAxMjY5NTMgODkuMzU5Mzc1IEMyMjEuODc3NDgwNDcgODkuOTAxMTg0MDggMjIyLjQ1MzY5MTQxIDkwLjQ0Mjk5MzE2IDIyMy4wNDczNjMyOCA5MS4wMDEyMjA3IEMyMjguMTA2NDA3NDggOTYuMDA4MzE5MzYgMjMxLjA1NDEzMTQgMTAxLjQ4NDA3MjEgMjMyLjE0NTAxOTUzIDEwOC41NTA3ODEyNSBDMjMyLjA2NjUxNzgyIDExNi4zOTExMzk1MyAyMzEuMzM3OTU4NTMgMTIxLjg5NDkxMzAyIDIyNi4wNzA4MDA3OCAxMjcuODU1NDY4NzUgQzIyMS4yMDc4OTU4MyAxMzIuNDk1ODE1MTIgMjE2LjM2NDIxMjU1IDEzMy45ODEyODYxIDIwOS43NTQzOTQ1MyAxMzQuMjA3MDMxMjUgQzE5OC4xNTIxNDY5NSAxMzMuODM4OTM5NjQgMTkxLjQ0Njg2MzI0IDEyNy4zOTM4Mzg1NyAxODMuNzM4NzY5NTMgMTE5LjI5Njg3NSBDMTc3LjY3NDEwNzYyIDExMy4wOTQyNTE4OCAxNzEuNTIxODM1MTEgMTA3LjM3NzEyNjUgMTY0LjYxMzc2OTUzIDEwMi4xMDkzNzUgQzE2My40MTQzODEgMTAxLjE2OTQ4NzQ1IDE2Mi4yMTUxNzQ2IDEwMC4yMjkzNjc0NSAxNjEuMDE2MTEzMjggOTkuMjg5MDYyNSBDMTMxLjcxMzgyNTg0IDc2LjU2MDQxNzY4IDk4LjQ1NzE1MzkxIDYxLjE5MDg0NDY5IDYyLjYxMzc2OTUzIDUyLjEwOTM3NSBDNjEuMzY3MjQ2MDkgNTEuNzgxOTUzMTMgNjAuMTIwNzIyNjYgNTEuNDU0NTMxMjUgNTguODM2NDI1NzggNTEuMTE3MTg3NSBDLTIuODA4MzM5OTggMzYuMzM0NjM1NTEgLTcyLjExODUxMDQ2IDQ5Ljg2NDM1NjQ4IC0xMjUuNzg0MTc5NjkgODIuNTcwODAwNzggQy0xMzEuMDk5OTU5NDQgODUuOTIxMjEyMTggLTEzNi4yNzAwNTc2NyA4OS40NjI4Mjg0IC0xNDEuMzg2MjMwNDcgOTMuMTA5Mzc1IEMtMTQyLjA5MTUwODc5IDkzLjYxMTE0MjU4IC0xNDIuNzk2Nzg3MTEgOTQuMTEyOTEwMTYgLTE0My41MjM0Mzc1IDk0LjYyOTg4MjgxIEMtMTUxLjczNjE3MzkzIDEwMC41MjE4MzQ0NCAtMTU5LjQ0NTY5ODA3IDEwNi43MjYwNDkzNiAtMTY2Ljc5MjQ4MDQ3IDExMy42Njc5Njg3NSBDLTE2OC45Mzk1MDgwNCAxMTUuNjg4ODkwNzggLTE3MS4xMjM0NjQxNyAxMTcuNTk3MTkwODEgLTE3My4zODYyMzA0NyAxMTkuNDg0Mzc1IEMtMjIwLjcyMDUyNTU3IDE2MC43NDI2MzIyMiAtMjQ3LjM5NzIzMDYxIDIyNy4zMjU3MTk1OCAtMjUxLjkyMTM4NjcyIDI4OC44MjM0ODYzMyBDLTI1NC4xOTQyNDM2OCAzMjQuMjUxMDUyMzUgLTI0OC4zNjk1NDc2NSAzNTguNzQ3MTE1NjUgLTIzNi42MDA1ODU5NCAzOTIuMTU4MjAzMTIgQy0yMTguMjYwMDc0NDUgNDQ0LjU0ODMxNjA2IC0yMzIuNTE5NzUzNzYgNTAxLjY5NjY4Nzk2IC0yNDQuMzcwNjA1NDcgNTU0LjAxNTYyNSBDLTI0NC41MTg4MTI0MSA1NTQuNjc2Mjc0NTcgLTI0NC42NjcwMTkzNSA1NTUuMzM2OTI0MTMgLTI0NC44MTk3MTc0MSA1NTYuMDE3NTkzMzggQy0yNDUuNDg0OTgxMjggNTU4Ljk3NzYxOTMgLTI0Ni4xNjczOTIwNCA1NjEuOTMxMDY0ODIgLTI0Ni44ODU5ODYzMyA1NjQuODc4NjYyMTEgQy0yNDguMjIzMzU0MDkgNTcwLjY4OTc5MzQyIC0yNDguODIyNjMwMDkgNTc0LjU3MzQ1NzgxIC0yNDYuMzg2MjMwNDcgNTgwLjEwOTM3NSBDLTI0NC4zNTExNjExMiA1ODIuMjk3Mjk4NTQgLTI0NC4zNTExNjExMiA1ODIuMjk3Mjk4NTQgLTI0MS4zODYyMzA0NyA1ODMuMTA5Mzc1IEMtMjM0LjE4MjYyNTIzIDU4Mi44NTk1ODU1NiAtMjI4Ljc2MzI3MTUzIDU4MC4yNDMwOTUzNSAtMjIyLjM4NjIzMDQ3IDU3Ny4wNDY4NzUgQy0yMjAuODY0MzcxMzQgNTc2LjMwMzA0NTY1IC0yMjAuODY0MzcxMzQgNTc2LjMwMzA0NTY1IC0yMTkuMzExNzY3NTggNTc1LjU0NDE4OTQ1IEMtMjE0LjgxNzIwODYgNTczLjM0MDQ3MjIzIC0yMTAuMzQ0NDY4NTkgNTcxLjA5NjM1MzcyIC0yMDUuODkwMTM2NzIgNTY4LjgxMjUgQy0xNzQuNDAzMTUzMzUgNTUyLjY3MTg4ODk1IC0xMzkuMDE3MDI2NTUgNTQ2LjMyNjM1MjYxIC0xMDQuNTk3NjU2MjUgNTU3LjExMDU5NTcgQy05Ny45OTY1MTIxNiA1NTkuMjg0MjgxNDQgLTkxLjU4OTk0Mjk2IDU2MS44MjU0OTQ3NCAtODUuMTk4NzMwNDcgNTY0LjU0Njg3NSBDLTI2LjM5NTUwODM1IDU4OS4zNjAzOTEyOSA0MS4zNjA0MTY3NiA1ODcuNDc0Mzg5MyAxMDAuMDUxMjY5NTMgNTYzLjY3MTg3NSBDMTA5LjEyNDkyNjE1IDU1OS44OTAzODcxMyAxMTcuOTM1MDY3MjEgNTU1LjcxOTI2OTkgMTI2LjYxMzc2OTUzIDU1MS4xMDkzNzUgQzEyNy4zMTkyMDg5OCA1NTAuNzQyNjM2NzIgMTI4LjAyNDY0ODQ0IDU1MC4zNzU4OTg0NCAxMjguNzUxNDY0ODQgNTQ5Ljk5ODA0Njg4IEMxNDAuODIzODU2NTEgNTQzLjcwMzU3NTM1IDE1MS43ODk3MDYyMSA1MzYuMzU0MTU4MTggMTYyLjYxMzc2OTUzIDUyOC4xMDkzNzUgQzE2My41ODA1NjY0MSA1MjcuMzc3MTg3NSAxNjQuNTQ3MzYzMjggNTI2LjY0NSAxNjUuNTQzNDU3MDMgNTI1Ljg5MDYyNSBDMTczLjIzMTQwMDcyIDUxOS44OTc0Njc2MiAxODAuNTgwMTg5NDQgNTEzLjI5Mjk4ODExIDE4Ny4zNDQyMzgyOCA1MDYuMjc3MzQzNzUgQzE4OS42MTM3Njk1MyA1MDQuMTA5Mzc1IDE4OS42MTM3Njk1MyA1MDQuMTA5Mzc1IDE5MS42MTM3Njk1MyA1MDQuMTA5Mzc1IEMxOTEuOTg2OTUzMTMgNTAzLjIzOTI1NzgxIDE5MS45ODY5NTMxMyA1MDMuMjM5MjU3ODEgMTkyLjM2NzY3NTc4IDUwMi4zNTE1NjI1IEMxOTMuNzkyOTQwMjEgNDk5Ljc4Njk4MDEyIDE5NS40MDM1MDc3NyA0OTguMjMwNjY3MTIgMTk3LjU1MTI2OTUzIDQ5Ni4yMzQzNzUgQzIwMy41NjE5NTk0MiA0OTAuMzQ4NzA3NDYgMjA4LjU0NzU5NzUgNDgzLjgwMTE3OTc1IDIxMy42MTM3Njk1MyA0NzcuMTA5Mzc1IEMyMTQuMDU5Nzg1MTYgNDc2LjUyOTQ1ODAxIDIxNC41MDU4MDA3OCA0NzUuOTQ5NTQxMDIgMjE0Ljk2NTMzMjAzIDQ3NS4zNTIwNTA3OCBDMjUxLjc0ODYzMTczIDQyNy40NzcyOTU1OCAyNzIuMTU2Mzk2OTMgMzY4LjM1Mjg2MzAyIDI3MS45MjYyNjk1MyAzMDguMDQ2ODc1IEMyNzEuOTI0NDQ2NzIgMzA3LjA1NDkyMTI2IDI3MS45MjI2MjM5IDMwNi4wNjI5Njc1MyAyNzEuOTIwNzQ1ODUgMzA1LjA0MDk1NDU5IEMyNzEuODc0ODE0NSAyOTAuMTg3NjI0OTMgMjcxLjM4ODg1NDkyIDI3NS43Mzk4ODk3MSAyNjguNjEzNzY5NTMgMjYxLjEwOTM3NSBDMjY4LjQ1Mjc5Nzg1IDI2MC4yMDg4MDM3MSAyNjguMjkxODI2MTcgMjU5LjMwODIzMjQyIDI2OC4xMjU5NzY1NiAyNTguMzgwMzcxMDkgQzI2NS40NDgzMTEwOSAyNDMuNjgwMjE5MTQgMjYxLjE1NTY1OTk2IDIyOS41MzI5MTU3NyAyNTYuNjAyMDUwNzggMjE1LjMyODEyNSBDMjUwLjMwMDkyODY4IDE5NS42NjIzMDQwOSAyNTAuMzAwOTI4NjggMTk1LjY2MjMwNDA5IDI1NC40Mzc5ODgyOCAxODUuOTk2MDkzNzUgQzI1Ny4zMzU1MDU4OCAxODEuMzQ2NTg4NzYgMjYxLjYwMjc3MzQzIDE3OC4xMzcyMTc0NSAyNjYuNDI2MjY5NTMgMTc1LjY3MTg3NSBDMjczLjk0Mjc2MzQzIDE3NC4zNDU0MzQ5IDI4MS45MDI2NjIwNiAxNzMuOTk5OTMwMzQgMjg4LjYxMzc2OTUzIDE3OC4xMDkzNzUgQzI5OC4xNzYzMjk5MyAxODUuODU5MTI3NzQgMzAwLjkwMzQzMjkzIDIwMC42MDM0ODMzNyAzMDQuMTEzNzY5NTMgMjExLjg1OTM3NSBDMzA0LjMwNzMxMDE4IDIxMi41MzIzNDYxOSAzMDQuNTAwODUwODMgMjEzLjIwNTMxNzM4IDMwNC43MDAyNTYzNSAyMTMuODk4NjgxNjQgQzMxMC40Njc5NTY0NiAyMzQuMDI4NDExNjEgMzE0LjQyMjc2OTQyIDI1NC4yNzU5MjA2NyAzMTYuNjEzNzY5NTMgMjc1LjEwOTM3NSBDMzE2Ljc1NzMzODg3IDI3Ni40MjIyODUxNiAzMTYuNzU3MzM4ODcgMjc2LjQyMjI4NTE2IDMxNi45MDM4MDg1OSAyNzcuNzYxNzE4NzUgQzMxNy44Mzc2Nzk0MiAyODcuMzYxNTA5MiAzMTcuODU3Mjc4IDI5Ni45NzI4Njc0MSAzMTcuODYzNzY5NTMgMzA2LjYwOTM3NSBDMzE3Ljg2NDc4MTY1IDMwNy45NjUzMDc2MiAzMTcuODY0NzgxNjUgMzA3Ljk2NTMwNzYyIDMxNy44NjU4MTQyMSAzMDkuMzQ4NjMyODEgQzMxNy44MzcwMTMgMzMzLjc2Nzc0OTM3IDMxNS4xMDA5ODc3MSAzNTcuMjkyNDMwMTUgMzA5LjYxMzc2OTUzIDM4MS4xMDkzNzUgQzMwOS4zOTM1MDA5OCAzODIuMDcxNDk5MDIgMzA5LjE3MzIzMjQyIDM4My4wMzM2MjMwNSAzMDguOTQ2Mjg5MDYgMzg0LjAyNDkwMjM0IEMyOTcuOTU0ODI3OTkgNDMxLjA2Mzg4NTcgMjc1LjQ2OTM3OTUzIDQ3NC4zMjc0MDU0MSAyNDUuNjEzNzY5NTMgNTEyLjEwOTM3NSBDMjQ1LjE5MDc5NTkgNTEyLjY0OTQ5MjE5IDI0NC43Njc4MjIyNyA1MTMuMTg5NjA5MzggMjQ0LjMzMjAzMTI1IDUxMy43NDYwOTM3NSBDMjM3LjIxNDU0NTk4IDUyMi43Mjk1OTY3OCAyMjkuMTIxODA0MDQgNTMwLjgwNTc1MDExIDIyMS4wNTEyNjk1MyA1MzguOTIxODc1IEMyMjAuNTIwNDY3ODMgNTM5LjQ1ODAzNDM2IDIxOS45ODk2NjYxNCA1MzkuOTk0MTkzNzMgMjE5LjQ0Mjc3OTU0IDU0MC41NDY2MDAzNCBDMjEyLjUwNDI3Njc2IDU0Ny41MzgxMTY4MyAyMDUuMzY4MDcyMjcgNTU0LjAxMjEwMzggMTk3LjYxMzc2OTUzIDU2MC4xMDkzNzUgQzE5Ni41NDE1OTQ4NCA1NjAuOTc4NDc2MTQgMTk1LjQ2OTg2NjY4IDU2MS44NDgxMjg5OCAxOTQuMzk4OTI1NzggNTYyLjcxODc1IEMxNjUuODA1MjE1OTIgNTg1LjE5OTg4Nzc0IDEzMy4wNTAyMDA2NSA2MDEuNzA4ODc2MDggOTguNjEzNzY5NTMgNjEzLjEwOTM3NSBDOTcuODczNTI1MzkgNjEzLjM2MjY3NTc4IDk3LjEzMzI4MTI1IDYxMy42MTU5NzY1NiA5Ni4zNzA2MDU0NyA2MTMuODc2OTUzMTIgQzg2LjUzMDQ5NjQ0IDYxNy4yMjUzNTY2OCA3Ni40MjE2NDE4MiA2MTkuMjgzMDA5NzMgNjYuMjM4NzY5NTMgNjIxLjI5Njg3NSBDNjQuMzU5MDc0NzEgNjIxLjY3MjM1NDc0IDY0LjM1OTA3NDcxIDYyMS42NzIzNTQ3NCA2Mi40NDE0MDYyNSA2MjIuMDU1NDE5OTIgQzQ0LjE1NDc5NTQ1IDYyNS41Mzk5ODY3NiAyNi4xNDQ2NzAzNyA2MjYuNDg4NzM3MTYgNy41NTEyNjk1MyA2MjYuNDIxODc1IEM2LjQ3MDgzMzc0IDYyNi40MTk3MTk4NSA1LjM5MDM5Nzk1IDYyNi40MTc1NjQ3IDQuMjc3MjIxNjggNjI2LjQxNTM0NDI0IEMtMTEuNzk5MjY3MjQgNjI2LjM2MzkyMTgzIC0yNy41MjQ3ODgwNSA2MjUuOTYyMjgxNSAtNDMuMzg2MjMwNDcgNjIzLjEwOTM3NSBDLTQ0LjUyMjUzOTA2IDYyMi45MTA2OTgyNCAtNDUuNjU4ODQ3NjYgNjIyLjcxMjAyMTQ4IC00Ni44Mjk1ODk4NCA2MjIuNTA3MzI0MjIgQy02OS43MTYyMTM4MSA2MTguNDAyODU4NDggLTkxLjUzODI4MjQ5IDYxMi4xNTQ5NDc1IC0xMTIuOTYwNjkzMzYgNjAzLjEzMzc4OTA2IEMtMTMzLjc3Mzg2NDQ5IDU5NC40NDI4NzA4MiAtMTUyLjQxMTI3OTcgNTk1LjY3NTAwNzM3IC0xNzMuMDI0NDE0MDYgNjA0LjEwMjc4MzIgQy0xODEuODY4MTg4MDkgNjA3Ljg0NDg3Njc0IC0xOTAuMzc4MzM5MjQgNjEyLjA5NTA1NTIzIC0xOTguODMyMjc1MzkgNjE2LjY0MTExMzI4IEMtMjE4LjI0OTM0OTc5IDYyNy4wNTc2MTgzMyAtMjM4LjE3NjQ5NTMxIDYzMS4yODIzNTgxOCAtMjU5Ljc5NjM4NjcyIDYyNS4xNDA2MjUgQy0yNzIuNzEwNzM0NDcgNjIwLjY2OTY5MjkxIC0yODEuMzQzMTAzOTMgNjEyLjc4NDU4OTU1IC0yODcuNjMyMzI0MjIgNjAwLjcxODc1IEMtMjkwLjg1NjU0MzExIDU5My43NzQyNzg1NSAtMjkyLjgxNDc5NzkyIDU4Ni43NTg3Nzg4NSAtMjkzLjM4NjIzMDQ3IDU3OS4xMDkzNzUgQy0yOTMuNTAyMjQ2MDkgNTc3Ljg2MjIwNzAzIC0yOTMuNTAyMjQ2MDkgNTc3Ljg2MjIwNzAzIC0yOTMuNjIwNjA1NDcgNTc2LjU4OTg0Mzc1IEMtMjk0LjEzMjE0MTY2IDU2NS45NzU0Njc4MyAtMjkxLjUzODQwMzY3IDU1NS44NzA0MTU0NSAtMjg5LjMzMzAwNzgxIDU0NS41NTU2NjQwNiBDLTI4Ny4yODM0NzI3MSA1MzUuOTU4MzQwNCAtMjg1LjMwMjI3NTMzIDUyNi4zNDY1Mzg0OSAtMjgzLjMyMzczMDQ3IDUxNi43MzQzNzUgQy0yODMuMTAyODQ3NiA1MTUuNjYyMzE4MTIgLTI4Mi44ODE5NjQ3MiA1MTQuNTkwMjYxMjMgLTI4Mi42NTQzODg0MyA1MTMuNDg1NzE3NzcgQy0yNzkuMzU1MzY1NTQgNDk3LjQyMTcyODIyIC0yNzYuMzUwMzUxNTcgNDgxLjM5OTA3MDgzIC0yNzQuMzg2MjMwNDcgNDY1LjEwOTM3NSBDLTI3NC4yODgxODExNSA0NjQuMzM1Njk1OCAtMjc0LjE5MDEzMTg0IDQ2My41NjIwMTY2IC0yNzQuMDg5MTExMzMgNDYyLjc2NDg5MjU4IEMtMjcxLjI1NDExNTQ4IDQzOS4zMDIwNzE2NyAtMjc2LjI1MzE0ODkzIDQxOS4wNzc4NTQ1MiAtMjgzLjU2ODA1NDIgMzk2Ljk4NjQ4MDcxIEMtMjkzLjQzMTAyNDEgMzY3LjE3NzE1ODEgLTI5OC4xNzQzNjA0OCAzMzcuMjMyNzk1OTIgLTI5Ny44ODYyMzA0NyAzMDUuNzk2ODc1IEMtMjk3Ljg4MDY5MTUzIDMwNC42MDIxMzU2MiAtMjk3Ljg3NTE1MjU5IDMwMy40MDczOTYyNCAtMjk3Ljg2OTQ0NTggMzAyLjE3NjQ1MjY0IEMtMjk3Ljc3MDI4MzkgMjgzLjg4MzM3MDE3IC0yOTcuMDkxMDE2NjYgMjY2LjA3NzAzMTc3IC0yOTMuMzg2MjMwNDcgMjQ4LjEwOTM3NSBDLTI5My4xNjEyODkwNiAyNDcuMDE2ODk0NTMgLTI5Mi45MzYzNDc2NiAyNDUuOTI0NDE0MDYgLTI5Mi43MDQ1ODk4NCAyNDQuNzk4ODI4MTIgQy0yOTEuMTUxOTc2MSAyMzcuNTA2MjQ4NDMgLTI4OS4zNDA0MTQxNyAyMzAuMzAzNTgyNDIgLTI4Ny4zODYyMzA0NyAyMjMuMTA5Mzc1IEMtMjg3LjE2MjQxNjk5IDIyMi4yNTc5NDkyMiAtMjg2LjkzODYwMzUyIDIyMS40MDY1MjM0NCAtMjg2LjcwODAwNzgxIDIyMC41MjkyOTY4OCBDLTI3Ni42NzE4NDM4NSAxODIuNjYzMjAyNTQgLTI1Ny45OTU2Mjc2MyAxNDYuNTA1MjgzNDkgLTIzMy4zODYyMzA0NyAxMTYuMTA5Mzc1IEMtMjMyLjU1MzY4NTE0IDExNS4wNjQyMTEzNyAtMjMxLjcyMTYxNjQyIDExNC4wMTg2Njc4MyAtMjMwLjg5MDEzNjcyIDExMi45NzI2NTYyNSBDLTIxNy4yNTc3ODk2IDk2LjAzMjYzMzkyIC0yMDEuODc3OTU2NDggNzkuMTI5MTgxNzEgLTE4NC4zODYyMzA0NyA2Ni4xMDkzNzUgQy0xODIuOTgxMjQ0MzggNjUuMDM3ODEwNDcgLTE4MS41NzYzMDA0NCA2My45NjYxOTA2NyAtMTgwLjE3MTM4NjcyIDYyLjg5NDUzMTI1IEMtMTQzLjQwNzQxOTA5IDM1LjEwMDQ2NjM4IC0xMDEuNzIzMTc0NTMgMTUuMTgwMTI5NTggLTU2LjM4NjIzMDQ3IDYuMTA5Mzc1IEMtNTUuNDc5Mzc1IDUuOTI1MzYxMzMgLTU0LjU3MjUxOTUzIDUuNzQxMzQ3NjYgLTUzLjYzODE4MzU5IDUuNTUxNzU3ODEgQy0zNS44NzI5NzY4IDIuMDM5MTc1NTIgLTE4LjA2NDY0OTY4IDAuODI4MDA5MzIgMCAwIFogIiBmaWxsPSIjRkUxOTU5IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzNzEuMzg2MjMwNDY4NzUsOTYuODkwNjI1KSIvPgo8L2c+CjxnIGlkPSJzdGFyIj4KPHBhdGggZD0iTTAgMCBDMi4zMTI1IDAuMTg3NSAyLjMxMjUgMC4xODc1IDUgMSBDOC4zMTY0NTM3MSA1LjMyNjkzNTcgOS4zMDUzMjE2MSAxMC4zMzI1NDg1OSAxMC42ODc1IDE1LjUgQzEzLjIyNzgwMTE3IDI0LjQxODUwODEgMTYuNDI1OTc3NzEgMzEuNTAwNTk5NzggMjIgMzkgQzIyLjg4OTQ1MzEzIDQwLjIyMzk2NDg0IDIyLjg4OTQ1MzEzIDQwLjIyMzk2NDg0IDIzLjc5Njg3NSA0MS40NzI2NTYyNSBDMzUuMDI0NjM3ODIgNTUuNDU5Mzc3ODkgNTEuODgyMjUzNzUgNjAuMzU2NDk5NTUgNjguNDUzMTI1IDY1LjEwNTQ2ODc1IEM3MSA2NiA3MSA2NiA3MyA2OCBDNzMuMTI1IDcwLjkzNzUgNzMuMTI1IDcwLjkzNzUgNzIgNzQgQzY5LjMyNjE0ODYxIDc1LjE1MTAzNTAzIDY2Ljc2MDc0NjY4IDc2LjExMjg2ODM0IDY0IDc3IEM2My4yNzQ1ODAwOCA3Ny4yMzY3ODQ2NyA2Mi41NDkxNjAxNiA3Ny40NzM1NjkzNCA2MS44MDE3NTc4MSA3Ny43MTc1MjkzIEM2MC4zMjAyNDMyNyA3OC4xOTYyMTUzOCA1OC44Mzc0NjYxOSA3OC42NzEwMDk4IDU3LjM1MzUxNTYyIDc5LjE0MjA4OTg0IEMzOS4xMjgxMDIxMSA4NC45NzI1MTMwNSAyNS42NzA4NTExNyA5NC4xMTU4ODc0NSAxNi40Mzc1IDExMS4zMTI1IEMxMy4xMjExNzE2MiAxMTguMTE2NTYyNDkgMTAuOTc5NTQzODMgMTI1LjExNTgyNjAyIDkuMDQwNzcxNDggMTMyLjQyMzA5NTcgQzguODE1OTEwNjQgMTMzLjI0NzY5Mjg3IDguNTkxMDQ5OCAxMzQuMDcyMjkwMDQgOC4zNTkzNzUgMTM0LjkyMTg3NSBDOC4wNzI3MTk3MyAxMzYuMDI5MzQwODIgOC4wNzI3MTk3MyAxMzYuMDI5MzQwODIgNy43ODAyNzM0NCAxMzcuMTU5MTc5NjkgQzcgMTM5IDcgMTM5IDQgMTQxIEMxLjM4NTgxODQ5IDE0MC44MzY2MTM2NiAwLjMyMzA4MDI1IDE0MC4zNDAwODQ0OCAtMS40ODQzNzUgMTM4LjQzNzUgQy0zLjUwMTMwNTEyIDEzNS4xOTM3NzczMyAtNC4zMDUyNzM0NyAxMzEuNzgzOTc5NzEgLTUuMjUgMTI4LjEyNSBDLTEwLjE4NzEzNzcyIDExMC40MjAzMTc5NyAtMTkuMDIwNjM0ODMgOTUuNzU3NzA3NTkgLTM1IDg2IEMtNDIuMzk5MDcyOTIgODEuODQ1MzE1NTIgLTUwLjQ0NjQ5Nzc5IDc5LjQ3MTA3NDc5IC01OC41MzkwNjI1IDc3LjA1NDE5OTIyIEMtNTkuNzI2Mjg5MDYgNzYuNjk2NzI2MDcgLTU5LjcyNjI4OTA2IDc2LjY5NjcyNjA3IC02MC45Mzc1IDc2LjMzMjAzMTI1IEMtNjEuNjQ3NzczNDQgNzYuMTIyOTYxNDMgLTYyLjM1ODA0Njg4IDc1LjkxMzg5MTYgLTYzLjA4OTg0Mzc1IDc1LjY5ODQ4NjMzIEMtNjUgNzUgLTY1IDc1IC02OCA3MyBDLTY4LjQzNzUgNzAuNTYyNSAtNjguNDM3NSA3MC41NjI1IC02OCA2OCBDLTY0LjQwNTQxMzgyIDY0LjI3ODA4NTE2IC01OS4zMjM3ODAwMSA2My41MDI5MTQ1NSAtNTQuNSA2Mi4xODc1IEMtMzQuNjcxNzg3OTMgNTYuNDUyMjQyOTYgLTIxLjAxODI1MTkxIDQ3LjA2NzEwMzg2IC0xMSAyOSBDLTcuNTA0MjIyNCAyMi42NTU4MTEwMyAtNS42NjE4MzM1NyAxNS44MDEwNjQxMiAtMy43NDkwMjM0NCA4Ljg1MDM0MTggQy0yLjgxMTQ5NjA2IDUuNDg2Mjk1MzkgLTEuOTUzNjE1MjYgMi45MzA0MjI5IDAgMCBaICIgZmlsbD0iI0ZFMTk1OSIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNzE0LDExNCkiLz4KPC9nPgo8ZyBpZD0iZXllcyI+CjxnIGlkPSJleWUtcmlnaHQiPgo8cGF0aCBkPSJNMCAwIEM5LjI3MTM5MTcyIDQuMjg5NzQ4NDEgMTQuNTU3NTg3MDUgMTIuMzYyNDk4NDYgMTguMTIwMzYxMzMgMjEuNjg4NzIwNyBDMjAuMTY1NzkxNjEgMjcuOTUxNDM5MyAyMC4wMTEzOTM5MiAzNC4xNzg2ODM3MyAxOS45OTYwOTM3NSA0MC43MTA5Mzc1IEMyMC4wMDEzMzU2IDQyLjAyNjA3MzMgMjAuMDA2NTc3NDUgNDMuMzQxMjA5MTEgMjAuMDExOTc4MTUgNDQuNjk2MTk3NTEgQzIwLjAyMDg2MzY5IDQ3LjQ2ODEzNjI1IDIwLjAxODUzOTUxIDUwLjIzOTc4NjIgMjAuMDA4NTQ0OTIgNTMuMDExNzE4NzUgQzE5Ljk5NzA3MTQ3IDU2LjUzNDA2NzE5IDIwLjAxNzI2MzU2IDYwLjA1NTQxMDU4IDIwLjA0NjQ2MjA2IDYzLjU3NzYyNzE4IEMyMC4wNjk0MDUyMSA2Ni45NzYyODAzNSAyMC4wNjIzNDkwNiA3MC4zNzQ3MDkxNyAyMC4wNTg1OTM3NSA3My43NzM0Mzc1IEMyMC4wNjk4Mjc3MyA3NS4wMjI3MzA0MSAyMC4wODEwNjE3MSA3Ni4yNzIwMjMzMiAyMC4wOTI2MzYxMSA3Ny41NTkxNzM1OCBDMTkuOTk2NjY5NTkgODkuNzQ2OTcyNzYgMTYuNTc3ODQ5ODMgMTAwLjQzMTY1OCA4LjA4OTg0Mzc1IDEwOS40Mzc1IEMxLjAyMDc0Mzc5IDExNS43NzE0MTM1NiAtNS40NzUyOTQ1OSAxMTYuNTA1MDQ2OTggLTE0LjcxMDkzNzUgMTE2LjI3NzM0Mzc1IEMtMjMuMjgwNDYyODkgMTE1LjM1MjEyMjQ1IC0yOS4yNDYzNzY5NiAxMTEuMTY0NTQzMTggLTM0LjY3OTY4NzUgMTA0LjYwOTM3NSBDLTQxLjI3NjE2OTEzIDk0LjM0ODE4MTM2IC00Mi41ODc1NjU0NSA4Mi45NjU2NTgyMiAtNDIuNjc1NzgxMjUgNzEuMDk3NjU2MjUgQy00Mi42ODc4ODg4NyA2OS41MzIzNDQxMyAtNDIuNjg3ODg4ODcgNjkuNTMyMzQ0MTMgLTQyLjcwMDI0MTA5IDY3LjkzNTQwOTU1IEMtNDIuNzE0MDQzODkgNjUuNzI3MzgyODIgLTQyLjcyNDc4Mjk3IDYzLjUxOTMzNTA5IC00Mi43MzI2NjYwMiA2MS4zMTEyNzkzIEMtNDIuNzQ0MTM5NTUgNTkuMDc4MTQxNjkgLTQyLjc2NDUxNzA3IDU2Ljg0NTAzMDQ5IC00Mi43OTQxODk0NSA1NC42MTIwNjA1NSBDLTQzLjIzODc3Njc2IDIxLjEwNDA4NjY3IC00My4yMzg3NzY3NiAyMS4xMDQwODY2NyAtMzIuNDM3NSA3Ljg3NSBDLTIzLjM0ODA5ODUzIC0wLjY2OTAzNzM4IC0xMi4xODU3NjAwMyAtNC4wMDYyNzcyNyAwIDAgWiAiIGZpbGw9IiNGRTE5NTkiIHRyYW5zZm9ybT0idHJhbnNsYXRlKDQ2OC40Mzc1LDM0Mi4xMjUpIi8+CjwvZz4KPGcgaWQ9ImV5ZS1sZWZ0Ij4KPHBhdGggZD0iTTAgMCBDOC44NTU3MTI2OCA2LjI1Mjk1ODQyIDEzLjQ3NDYwMTkxIDE0LjMzMjI1MDA5IDE1Ljc0ODg4NjExIDI0Ljg1MTcxNTA5IEMxNi41NjU4MTI5MSAyOS45NDc3MjAyNyAxNi41MDU1NDkyMyAzNS4wNjA0NDE2MiAxNi41MTU2MjUgNDAuMjEwOTM3NSBDMTYuNTIyMjgxOCA0MS40MTAzNDk3MyAxNi41Mjg5Mzg2IDQyLjYwOTc2MTk2IDE2LjUzNTc5NzEyIDQzLjg0NTUyMDAyIEMxNi41NDU4ODIzMyA0Ni4zNzM1NjAzNSAxNi41NTA2MTU0MyA0OC45MDE2MjcwOCAxNi41NTAyOTI5NyA1MS40Mjk2ODc1IEMxNi41NTQ2NTgzNiA1NS4yNjM0NzUyNyAxNi41OTEwMDM1OCA1OS4wOTYxMDM0OSAxNi42Mjg5MDYyNSA2Mi45Mjk2ODc1IEMxNi42MzQ3NzcwNiA2NS4zOTg0MzM2MSAxNi42Mzg3NDQ2OCA2Ny44NjcxODUxMyAxNi42NDA2MjUgNzAuMzM1OTM3NSBDMTYuNjU0OTk2MDMgNzEuNDY1NTM4OTQgMTYuNjY5MzY3MDcgNzIuNTk1MTQwMzggMTYuNjg0MTczNTggNzMuNzU4OTcyMTcgQzE2LjYxNTQ4NTMxIDg1LjkzOTE2ODU1IDEzLjYwMDUwNjIzIDk3LjQyNzQ3MzQ4IDUuMTc5Njg3NSAxMDYuNTM5MDYyNSBDLTMuMzE5ODU3MSAxMTMuNTc0MTU4NTQgLTEwLjg5NjkzMzM4IDExNC41NDM5MTg4IC0yMS44MjAzMTI1IDExMy41MzkwNjI1IEMtMjkuNjkwMzQyMzkgMTExLjMzNTAyNDA4IC0zNS4zMDk4ODY4NCAxMDYuMjI0NTE1NjQgLTM5LjgyMDMxMjUgOTkuNTM5MDYyNSBDLTQzLjUzMjg1MTE4IDkyLjI3MDk4MzA0IC00NS45MjAxMzExMiA4NS4zOTQ0ODQgLTQ1Ljk4MTQ0NTMxIDc3LjIwNDgzMzk4IEMtNDUuOTkxMDUyODYgNzYuMTYyODIzMzMgLTQ2LjAwMDY2MDQgNzUuMTIwODEyNjggLTQ2LjAxMDU1OTA4IDc0LjA0NzIyNTk1IEMtNDYuMDE0ODA4OTYgNzIuOTI5NDkyOTUgLTQ2LjAxOTA1ODg0IDcxLjgxMTc1OTk1IC00Ni4wMjM0Mzc1IDcwLjY2MDE1NjI1IEMtNDYuMDI5MTM3NTcgNjkuNDk3MTA0NjQgLTQ2LjAzNDgzNzY1IDY4LjMzNDA1MzA0IC00Ni4wNDA3MTA0NSA2Ny4xMzU3NTc0NSBDLTQ2LjA1MDE0OTggNjQuNjczNzY2MTMgLTQ2LjA1NjY5MDIgNjIuMjExNzYyMjUgLTQ2LjA2MDU0Njg4IDU5Ljc0OTc1NTg2IEMtNDYuMDcwMjE0MSA1Ni4wMTQ1ODE0IC00Ni4xMDEyMzI3NiA1Mi4yNzk5NjY0IC00Ni4xMzI4MTI1IDQ4LjU0NDkyMTg4IEMtNDYuMTM5MzQ3MDMgNDYuMTQ1ODM2NTggLTQ2LjE0NDU5NTczIDQzLjc0Njc0NzM3IC00Ni4xNDg0Mzc1IDQxLjM0NzY1NjI1IEMtNDYuMTYwNzg0MyA0MC4yNDQwOTI4NiAtNDYuMTczMTMxMSAzOS4xNDA1Mjk0OCAtNDYuMTg1ODUyMDUgMzguMDAzNTI0NzggQy00Ni4xNDg2NDk1NiAyNC44MTI5MzA3NiAtNDMuMTQ5NjE3ODUgMTMuNDg0NTQ4MzkgLTM0LjA1NDY4NzUgMy42MjUgQy0yNC41MjgwODQwMSAtNS4wODYyNjM1NSAtMTEuMjkyMDM5ODcgLTYuNjI3MTMxNTkgMCAwIFogIiBmaWxsPSIjRkUxOTU5IiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgyOTkuODIwMzEyNSwzNDQuNDYwOTM3NSkiLz4KPC9nPgo8L2c+Cjwvc3ZnPgo="
+            alt=""
+          />
+          <span class="brand-name">ChatLab</span>
+          <span class="version">v0.37.7</span>
+          <svg class="icon layout-icon"><use href="#panel" /></svg>
+        </div>
+        <nav class="global-nav" aria-label="主导航">
+          <div class="nav-line">
+            <svg class="icon"><use href="#plus" /></svg>
+            分析新对话
+          </div>
+          <div class="nav-line">
+            <svg class="icon"><use href="#chat" /></svg>
+            AI 对话
+          </div>
+          <div class="nav-line">
+            <svg class="icon"><use href="#chart" /></svg>
+            足迹
+          </div>
+          <div class="nav-line">
+            <svg class="icon"><use href="#users" /></svg>
+            关系
+          </div>
+        </nav>
+        <section class="filters" aria-label="筛选会话">
+          <div class="type-tabs" id="type-tabs">
+            <button data-type="all" class="active" aria-pressed="true">全部</button>
+            <button data-type="private" aria-pressed="false">私聊</button>
+            <button data-type="group" aria-pressed="false">群聊</button>
+            <span class="actions" aria-hidden="true">
+              <svg class="icon"><use href="#sort" /></svg><svg class="icon"><use href="#folder" /></svg>
+            </span>
+          </div>
+          <div class="sources" id="sources" aria-label="按平台筛选"></div>
+          <label class="search">
+            <svg class="icon" aria-hidden="true"><use href="#search" /></svg>
+            <input id="session-search" type="search" placeholder="搜索会话名称" aria-label="搜索会话名称" />
+          </label>
+        </section>
+        <div class="list-label">
+          <span id="list-summary"></span>
+          <span>按最近消息排序</span>
+        </div>
+        <div class="session-list" id="session-list" aria-label="会话列表"></div>
+        <div class="sidebar-footer">
+          <button id="all-sources">
+            <svg class="icon"><use href="#link" /></svg>
+            2 个消息来源
+          </button>
+          <span class="small-note">本地存档</span>
+        </div>
+      </aside>
+      <main id="main" aria-label="会话详情">
+        <header class="chat-header">
+          <button class="mobile-back" id="back">← 返回会话</button>
+          <div class="chat-heading">
+            <div class="chat-avatar" id="chat-avatar"></div>
+            <div>
+              <h1 id="chat-title"></h1>
+              <div class="heading-info" id="heading-info"></div>
+            </div>
+            <button class="source-link" id="source-details" aria-expanded="false" aria-controls="source-panel">
+              <svg class="icon"><use href="#info" /></svg>
+              来源详情
+            </button>
+          </div>
+          <div class="chat-tabs">
+            <span class="chat-tab">
+              <svg class="icon"><use href="#chart" /></svg>
+              洞察
+            </span>
+            <span class="chat-tab active">
+              <svg class="icon"><use href="#chat" /></svg>
+              聊天记录
+            </span>
+            <span class="chat-tab">
+              <svg class="icon"><use href="#users" /></svg>
+              成员
+            </span>
+          </div>
+        </header>
+        <div class="records-toolbar">
+          <label class="search">
+            <svg class="icon" aria-hidden="true"><use href="#search" /></svg>
+            <input id="message-search" type="search" placeholder="搜索本会话的消息" aria-label="搜索本会话的消息" />
+          </label>
+          <span class="scope-note" id="scope-note"></span>
+        </div>
+        <div class="record-head">
+          <span>时间</span>
+          <span>发送者</span>
+          <span>消息内容</span>
+        </div>
+        <section class="records" id="records" aria-label="示例聊天记录"></section>
+        <footer class="chat-footer">
+          <span id="chat-footer-source"></span>
+          <span>仅展示示例消息</span>
+        </footer>
+        <section id="source-panel" class="source-panel" aria-label="来源详情" hidden></section>
+      </main>
+    </div>
+    <footer class="design-note">
+      <span>
+        <b>01</b>
+        按来源筛选
+      </span>
+      <span>
+        <b>02</b>
+        每条会话标明平台
+      </span>
+      <span>
+        <b>03</b>
+        同名会话也能区分
+      </span>
+      <span class="prototype-state" id="prototype-state"></span>
+    </footer>
+    <script>
+      const svg = (name) =>
+        `<svg class="${name === 'qq' ? '' : 'icon'}" aria-hidden="true"><use href="#${name}"/></svg>`
+      const platforms = {
+        qq: {
+          name: 'QQ',
+          short: 'QQ',
+          icon: 'qq',
+          account: '个人账号',
+          source: 'QQ（本机全部会话）',
+          cadence: '每 3 小时',
+          last: '11:00',
+          next: '14:00',
+        },
+        wecom: {
+          name: '企业微信',
+          short: '企微',
+          icon: 'work',
+          account: '工作账号',
+          source: '企业微信（本机全部会话）',
+          cadence: '每 10 分钟',
+          last: '13:40',
+          next: '13:50',
+        },
+      }
+      const sessions = [
+        { id: 'cpa', name: 'CPA(CLI Proxy API)交流群', p: 'qq', n: 144904, t: 'group' },
+        { id: 'dbx', name: 'DBX交流群', p: 'qq', n: 19586, t: 'group' },
+        { id: 'packy', name: 'PackyCode', p: 'qq', n: 373615, t: 'group' },
+        { id: 'right', name: 'Right Code', p: 'qq', n: 181656, t: 'group' },
+        { id: 'supply', name: '供应链项目生产预警群', p: 'wecom', n: 395, t: 'group' },
+        { id: 'collab', name: '产研协作群', p: 'wecom', n: 6803, t: 'group' },
+        { id: 'deep', name: 'deepseek harness桌面版', p: 'qq', n: 46379, t: 'group' },
+        { id: 'db', name: '数据库日常变更处理群', p: 'wecom', n: 630, t: 'group' },
+        { id: 'ikun', name: 'IKunCode | 1群', p: 'qq', n: 234227, t: 'group' },
+        { id: 'openclaw', name: 'OpenClaw交流群', p: 'qq', n: 34455, t: 'group' },
+        { id: 'tech-q', name: '技术交流群', p: 'qq', n: 2864, t: 'group' },
+        { id: 'tech-w', name: '技术交流群', p: 'wecom', n: 1260, t: 'group' },
+        { id: 'mail', name: '企业邮箱', p: 'wecom', n: 133, t: 'private' },
+        { id: 'lin', name: '林同学', p: 'wecom', n: 87, t: 'private' },
+      ]
+      let state = { source: 'all', type: 'all', query: '', selected: 'right', messageQuery: '', panel: false }
+      const $ = (id) => document.getElementById(id)
+      const fmt = (n) => n.toLocaleString('en-US')
+      const badge = (p, full = false) =>
+        `<span class="platform-badge ${p}">${svg(platforms[p].icon)}${full ? platforms[p].name : platforms[p].short}</span>`
+      const baseRows = () =>
+        sessions.filter(
+          (s) =>
+            (state.type === 'all' || s.t === state.type) &&
+            s.name.toLowerCase().includes(state.query.toLowerCase().trim())
+        )
+      function renderList() {
+        const base = baseRows()
+        $('sources').innerHTML = ['all', 'qq', 'wecom']
+          .map(
+            (p) =>
+              `<button class="source-chip ${state.source === p ? 'active' : ''}" data-source="${p}" aria-pressed="${state.source === p}">${p === 'all' ? '全部来源' : svg(platforms[p].icon) + platforms[p].short}<span class="num">${p === 'all' ? base.length : base.filter((s) => s.p === p).length}</span></button>`
+          )
+          .join('')
+        const rows = base.filter((s) => state.source === 'all' || s.p === state.source)
+        $('list-summary').textContent =
+          `${state.source === 'all' ? '全部来源' : platforms[state.source].name} · ${rows.length} 个会话`
+        $('session-list').innerHTML = rows.length
+          ? rows
+              .map(
+                (s) =>
+                  `<button class="session-row" data-id="${s.id}" aria-current="${state.selected === s.id}" aria-label="${s.name}，${platforms[s.p].name}，${s.t === 'group' ? '群聊' : '私聊'}"><span class="avatar">${s.name.slice(0, 1)}</span><span class="session-body"><span class="session-title" style="display:block">${s.name}</span><span class="session-meta">${badge(s.p)}<span>${fmt(s.n)} 条消息</span></span></span></button>`
+              )
+              .join('')
+          : `<div class="empty">没有符合条件的会话<br><button id="clear-filters">清除筛选</button></div>`
+        document.querySelectorAll('[data-type]').forEach((b) => {
+          b.classList.toggle('active', b.dataset.type === state.type)
+          b.setAttribute('aria-pressed', b.dataset.type === state.type)
+        })
+        $('prototype-state').innerHTML =
+          `筛选：${state.source === 'all' ? '全部' : platforms[state.source].short} / ${state.type === 'all' ? '全部' : state.type === 'private' ? '私聊' : '群聊'}`
+      }
+      function sampleMessages(s) {
+        const isQ = s.p === 'qq'
+        return isQ
+          ? [
+              ['10:42:18', '小周', '最近在整理几个工具的使用体验，大家一般怎么做长期记录？'],
+              ['10:44:03', '阿远', '我会先按项目归档，聊天里的有用信息再整理成笔记。'],
+              ['10:47:26', '木白', '同意，检索的时候能找到原来的讨论很重要。'],
+              ['10:51:12', '小周', '这个方案可以试一下。把来源和上下文留住，后面回看会方便很多。'],
+              ['11:02:35', '阿远', '整理了一份讨论提纲，先放在这里。', 'file'],
+              ['11:06:49', '木白', '群名相同的时候，也要能看出来是哪个平台的群。', 'quote'],
+              ['11:08:21', '小周', '是的，工作群和兴趣群最好可以单独筛选。'],
+            ]
+          : [
+              ['13:16:28', '产品同学', '今天的联调清单已整理，先确认各项验收口径。'],
+              ['13:19:04', '研发同学', '接口部分已准备好，下午可以一起核对。'],
+              ['13:23:37', '测试同学', '收到，回归结果会统一更新到清单里。'],
+              ['13:28:16', '产品同学', '请保留问题对应的会话和来源，方便后续跟进。'],
+              ['13:32:45', '研发同学', '这里是更新后的验收清单。', 'file'],
+              ['13:38:02', '测试同学', '确认后我会继续做下一轮回归。', 'quote'],
+            ]
+      }
+      function renderMessages() {
+        const s = sessions.find((s) => s.id === state.selected)
+        const data = sampleMessages(s).filter((m) => m.slice(1, 3).join(' ').includes(state.messageQuery.trim()))
+        $('records').innerHTML = data.length
+          ? `<div class="date-line"><strong>2026 年 11 月 12 日</strong><span>星期四</span></div>` +
+            data
+              .map(
+                (m) =>
+                  `<article class="record"><time>${m[0]}</time><div class="sender"><span class="mini-avatar">${m[1].slice(-1)}</span>${m[1]}</div><div class="message"><p>${m[2]}</p>${m[3] === 'file' ? `<div class="attachment">${svg('file')}<span>讨论与验收清单.md<small>Markdown · 示例附件</small></span></div>` : ''}${m[3] === 'quote' ? '<div class="quote">引用示例：保留来源，才能准确理解上下文。</div>' : ''}</div></article>`
+              )
+              .join('')
+          : '<div class="empty">没有匹配的示例消息</div>'
+      }
+      function renderDetail() {
+        const s = sessions.find((s) => s.id === state.selected),
+          p = platforms[s.p]
+        $('chat-title').textContent = s.name
+        $('chat-avatar').textContent = s.name.slice(0, 1)
+        $('heading-info').innerHTML =
+          `${badge(s.p, true)}<span>${p.account}</span><span class="separator">/</span><span>${s.t === 'group' ? '群聊' : '私聊'}</span><span class="separator">/</span><span>${fmt(s.n)} 条消息</span>`
+        $('scope-note').textContent = `仅搜索「${s.name}」`
+        $('chat-footer-source').textContent = `来源：${p.name} · ${p.account}　/　上次导入 ${p.last}`
+        renderMessages()
+        renderPanel()
+      }
+      function renderPanel(all = false) {
+        const s = sessions.find((s) => s.id === state.selected),
+          p = platforms[s.p]
+        $('source-panel').hidden = !state.panel
+        $('source-details').setAttribute('aria-expanded', state.panel)
+        $('source-panel').innerHTML =
+          `<div class="panel-header"><span>${all ? '消息来源' : '会话来源'}</span><button id="close-panel" aria-label="关闭来源详情">${svg('close')}</button></div>` +
+          (all
+            ? Object.entries(platforms)
+                .map(
+                  ([k, v]) =>
+                    `<button class="panel-source" data-panel-filter="${k}"><span>${badge(k, true)}<br><small>${v.account} · ${sessions.filter((s) => s.p === k).length} 个会话</small></span><small>查看会话 →</small></button>`
+                )
+                .join('')
+            : `<dl><dt>平台</dt><dd>${badge(s.p, true)}</dd><dt>账号备注</dt><dd>${p.account}</dd><dt>数据源</dt><dd>${p.source}</dd><dt>导入方式</dt><dd>自动同步 · 本机采集</dd><dt>同步间隔</dt><dd>${p.cadence}</dd><dt>上次导入</dt><dd>今天 ${p.last}</dd><dt>下次拉取</dt><dd>今天 ${p.next}</dd></dl>`) +
+          `<div class="panel-footer">${all ? '平台、账号与会话分别识别。同名群保留独立来源，不会按名称合并。' : '来源标识固定展示，不随会话重命名改变。暂停同步后，历史记录仍保留原平台。'}<br>本面板的账号备注、时间均为原型示例。</div>`
+      }
+      function render() {
+        renderList()
+        renderDetail()
+      }
+      $('sources').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-source]')
+        if (!b) return
+        state.source = b.dataset.source
+        const selected = sessions.find((s) => s.id === state.selected)
+        if (state.source !== 'all' && selected.p !== state.source) {
+          const first = baseRows().find((s) => s.p === state.source)
+          if (first) {
+            state.selected = first.id
+            state.messageQuery = ''
+            $('message-search').value = ''
+          }
+        }
+        state.panel = false
+        render()
+      })
+      $('type-tabs').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-type]')
+        if (!b) return
+        state.type = b.dataset.type
+        renderList()
+      })
+      $('session-search').addEventListener('input', (e) => {
+        state.query = e.target.value
+        renderList()
+      })
+      $('session-list').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-id]')
+        if (b) {
+          state.selected = b.dataset.id
+          state.messageQuery = ''
+          $('message-search').value = ''
+          state.panel = false
+          render()
+          $('app').classList.add('detail')
+        }
+        if (e.target.closest('#clear-filters')) {
+          state.source = 'all'
+          state.type = 'all'
+          state.query = ''
+          $('session-search').value = ''
+          renderList()
+        }
+      })
+      $('message-search').addEventListener('input', (e) => {
+        state.messageQuery = e.target.value
+        renderMessages()
+      })
+      $('source-details').addEventListener('click', () => {
+        state.panel = !state.panel
+        renderPanel()
+        if (state.panel) $('close-panel').focus()
+      })
+      $('all-sources').addEventListener('click', () => {
+        state.panel = true
+        $('app').classList.add('detail')
+        renderPanel(true)
+        $('close-panel').focus()
+      })
+      $('source-panel').addEventListener('click', (e) => {
+        if (e.target.closest('#close-panel')) {
+          state.panel = false
+          renderPanel()
+          $('source-details').focus()
+        }
+        const b = e.target.closest('[data-panel-filter]')
+        if (b) {
+          state.source = b.dataset.panelFilter
+          state.panel = false
+          renderPanel()
+          renderList()
+          $('app').classList.remove('detail')
+        }
+      })
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && state.panel) {
+          state.panel = false
+          renderPanel()
+          $('source-details').focus()
+        }
+      })
+      document.addEventListener('click', (e) => {
+        if (state.panel && !e.target.closest('#source-panel,#source-details,#all-sources')) {
+          state.panel = false
+          renderPanel()
+        }
+      })
+      $('back').onclick = () => {
+        $('app').classList.remove('detail')
+        state.panel = false
+        renderPanel()
+      }
+      $('theme').onclick = () => {
+        document.documentElement.classList.toggle('dark')
+        $('theme').textContent = document.documentElement.classList.contains('dark') ? '切换浅色' : '切换深色'
+      }
+      render()
+    </script>
+  </body>
+</html>
