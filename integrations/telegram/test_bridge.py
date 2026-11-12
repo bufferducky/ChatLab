@@ -1,0 +1,315 @@
+"""Prevent lost history on restart, duplicate imports, and unprotected reads."""
+
+import asyncio
+import json
+import tempfile
+import threading
+import unittest
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+from bridge import Cache, convert_message, make_server, refresh
+from telethon import types
+
+
+def payload(mid, stamp=100):
+    return {
+        "platformMessageId": str(mid),
+        "sender": "42",
+        "accountName": "Alice",
+        "timestamp": stamp,
+        "type": 0,
+        "content": "same text\nsecond line",
+    }
+
+
+class CacheTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.cache = Cache(Path(self.temp.name) / "cache")
+        self.cache.bind_account(1)
+        self.sid = self.cache.session(1, -1002, "Test", "group")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_replay_restart_and_cross_peer_ids(self):
+        big = 9007199254740993
+        self.assertEqual(
+            self.cache.ingest(self.sid, [payload(big), payload(big + 1)], now=1000), 2
+        )
+        restarted = Cache(self.cache.root)
+        self.assertEqual(restarted.cursor(self.sid), big + 1)
+        self.assertEqual(
+            restarted.ingest(self.sid, [payload(big), payload(big + 1)], now=1001), 0
+        )
+        other = restarted.session(1, -1003, "Other", "group")
+        self.assertEqual(restarted.ingest(other, [payload(big)]), 1)
+        with self.assertRaises(ValueError):
+            restarted.bind_account(2)
+        self.assertEqual(restarted.status()["messages"], 3)
+
+    def test_failed_batch_does_not_advance_checkpoint(self):
+        self.cache.ingest(self.sid, [payload(1)])
+        with self.assertRaises(ValueError):
+            self.cache.ingest(self.sid, [payload(2), payload("invalid")])
+        self.assertEqual(self.cache.cursor(self.sid), 1)
+        self.assertEqual(self.cache.status()["messages"], 1)
+
+    def test_week_boundary_migration_keeps_existing_messages_and_checkpoint(self):
+        self.cache.ingest(self.sid, [payload(42)])
+        with self.cache.connect() as db:
+            db.execute("ALTER TABLE sessions DROP COLUMN history_since")
+        restarted = Cache(self.cache.root)
+        restarted.session(1, -1002, "Test", "group", history_since=100)
+        self.assertEqual(restarted.cursor(self.sid), 42)
+        self.assertEqual(restarted.status()["messages"], 1)
+        self.assertEqual(restarted.history_since(self.sid), 100)
+
+    def test_keyset_paging_and_late_history_use_committed_observations(self):
+        self.cache.ingest(self.sid, [payload(5), payload(6), payload(7)], now=1000)
+        first = self.cache.messages(self.sid, limit=1)
+        self.assertTrue(first["sync"]["hasMore"])
+        self.cache.ingest(self.sid, [payload(2, stamp=1)], now=1000)
+        page = self.cache.messages(
+            self.sid, offset=first["sync"]["nextOffset"], limit=5
+        )
+        self.assertEqual(
+            [m["platformMessageId"] for m in page["messages"]], ["6", "7", "2"]
+        )
+        self.assertEqual(page["sync"]["nextSince"], 1001)
+        with patch("bridge.time.time", return_value=9000):
+            self.assertEqual(self.cache.messages(self.sid)["sync"]["nextSince"], 1001)
+        self.assertEqual(
+            self.cache.messages(self.sid, since=1001)["messages"], [payload(2, stamp=1)]
+        )
+
+    def test_http_auth_paging_and_invalid_cursor(self):
+        self.cache.ingest(self.sid, [payload(1), payload(2)])
+        self.cache.finish()
+        server = make_server(self.cache, {"token": "test-token", "port": 0})
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        def get(path):
+            with urlopen(
+                Request(base + path, headers={"Authorization": "Bearer test-token"})
+            ) as response:
+                return json.load(response)
+
+        try:
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(base + "/api/v1/sessions")
+            self.assertEqual(caught.exception.code, 401)
+            self.assertEqual(get("/api/v1/sessions")["sessions"][0]["messageCount"], 2)
+            prefix = f"/api/v1/sessions/{self.sid}/messages?limit=1"
+            first = get(prefix)
+            second = get(prefix + "&offset=" + str(first["sync"]["nextOffset"]))
+            self.assertEqual(
+                [
+                    first["messages"][0]["platformMessageId"],
+                    second["messages"][0]["platformMessageId"],
+                ],
+                ["1", "2"],
+            )
+            with self.assertRaises(HTTPError) as caught:
+                get(prefix + "&offset=-1")
+            self.assertEqual(caught.exception.code, 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
+class ConversionTests(unittest.TestCase):
+    def test_text_reply_service_and_channel_sender(self):
+        stamp = datetime(2025, 1, 1, tzinfo=UTC)
+        message = types.Message(
+            id=8,
+            peer_id=types.PeerChat(2),
+            from_id=types.PeerUser(42),
+            date=stamp,
+            message="line1\nline2",
+            reply_to=types.MessageReplyHeader(reply_to_msg_id=7),
+        )
+        value = convert_message(message, "Alice")
+        self.assertEqual(
+            (value["sender"], value["content"], value["replyToMessageId"]),
+            ("42", "line1\nline2", "7"),
+        )
+        service = types.MessageService(
+            id=9,
+            peer_id=types.PeerChat(2),
+            from_id=types.PeerUser(42),
+            date=stamp,
+            action=types.MessageActionChatCreate(title="Test", users=[42]),
+        )
+        self.assertEqual(convert_message(service)["type"], 80)
+        post = types.Message(
+            id=1, peer_id=types.PeerChannel(3), date=stamp, message="post", post=True
+        )
+        self.assertEqual(convert_message(post)["sender"], "-1000000000003")
+        message.reply_to = types.MessageReplyHeader(
+            reply_to_msg_id=7, reply_to_peer_id=types.PeerChannel(3)
+        )
+        self.assertNotIn("replyToMessageId", convert_message(message))
+
+    def test_media_labels_preserve_captions(self):
+        stamp = datetime(2025, 1, 1, tzinfo=UTC)
+        photo = types.Message(
+            id=1,
+            peer_id=types.PeerChat(2),
+            from_id=types.PeerUser(42),
+            date=stamp,
+            message="caption",
+            media=types.MessageMediaPhoto(photo=types.PhotoEmpty(id=1)),
+        )
+        value = convert_message(photo)
+        self.assertEqual((value["type"], value["content"]), (1, "[photo] caption"))
+
+
+class CollectionTests(unittest.TestCase):
+    def test_all_dialogs_discovers_new_chats_with_a_fixed_week_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            now = 1800000000
+
+            class Client:
+                peers = (1, 2)
+
+                async def connect(self):
+                    pass
+
+                async def disconnect(self):
+                    pass
+
+                async def is_user_authorized(self):
+                    return True
+
+                async def get_me(self):
+                    return SimpleNamespace(id=42)
+
+                async def iter_dialogs(self):
+                    for peer in self.peers:
+                        yield SimpleNamespace(
+                            id=peer, name=str(peer), is_user=True, entity=peer
+                        )
+
+                async def iter_messages(self, entity, **kwargs):
+                    if kwargs["min_id"] == 0:
+                        expected = now - 7 * 86400 + (86400 if entity == 3 else 0)
+                        assert kwargs["offset_date"].timestamp() == expected - 1
+                    yield types.Message(
+                        id=1,
+                        peer_id=types.PeerUser(entity),
+                        from_id=types.PeerUser(entity),
+                        date=datetime.fromtimestamp(now, UTC),
+                        message="synthetic",
+                    )
+
+            client = Client()
+            with (
+                patch("bridge.make_client", return_value=client),
+                patch("bridge.time.time", return_value=now),
+            ):
+                asyncio.run(refresh(directory, {"allDialogs": True}, cache))
+            self.assertEqual(cache.status()["messages"], 2)
+            client.peers = [1, 2, 3]
+            with (
+                patch("bridge.make_client", return_value=client),
+                patch("bridge.time.time", return_value=now + 86400),
+            ):
+                asyncio.run(refresh(directory, {"allDialogs": True}, cache))
+            self.assertEqual(cache.status()["messages"], 3)
+            self.assertEqual(cache.history_since("telegram:42:1"), now - 7 * 86400)
+            self.assertEqual(cache.history_since("telegram:42:3"), now - 6 * 86400)
+
+    def test_interrupted_history_resumes_after_last_committed_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            sid = cache.session(1, -2, "Test", "group")
+            stamp = datetime(2025, 1, 1, tzinfo=UTC)
+
+            class Client:
+                def __init__(self):
+                    self.fail = True
+                    self.cursors = []
+
+                async def connect(self):
+                    pass
+
+                async def disconnect(self):
+                    pass
+
+                async def is_user_authorized(self):
+                    return True
+
+                async def get_me(self):
+                    return SimpleNamespace(id=1)
+
+                async def iter_dialogs(self):
+                    yield SimpleNamespace(
+                        id=-2, name="Test", is_user=False, entity="test"
+                    )
+
+                async def iter_messages(
+                    self, entity, min_id, reverse, limit, wait_time, offset_date
+                ):
+                    self.cursors.append(min_id)
+                    assert reverse and limit is None and wait_time == 3
+                    assert (offset_date is not None) == (min_id == 0)
+                    if offset_date is not None:
+                        assert offset_date.timestamp() == stamp.timestamp() - 1
+                    for mid in range(min_id + 1, 6):
+                        if self.fail and mid == 4:
+                            raise ConnectionError("interrupted")
+                        yield types.Message(
+                            id=mid,
+                            peer_id=types.PeerChat(2),
+                            from_id=types.PeerUser(42),
+                            date=stamp - timedelta(days=10) if mid == 1 else stamp,
+                            message="same",
+                        )
+
+            client = Client()
+            with (
+                patch("bridge.make_client", return_value=client),
+                patch("bridge.BATCH_SIZE", 2),
+            ):
+                with self.assertRaises(ConnectionError):
+                    asyncio.run(
+                        refresh(
+                            directory,
+                            {
+                                "selectedPeers": ["-2"],
+                                "historySince": int(stamp.timestamp()),
+                            },
+                            cache,
+                        )
+                    )
+                self.assertEqual(cache.cursor(sid), 3)
+                self.assertEqual(cache.status()["historyComplete"], 0)
+                client.fail = False
+                result = asyncio.run(
+                    refresh(
+                        directory,
+                        {
+                            "selectedPeers": ["-2"],
+                            "historySince": int(stamp.timestamp()),
+                        },
+                        cache,
+                    )
+                )
+                self.assertEqual(client.cursors, [0, 3])
+                self.assertEqual(
+                    (result["messages"], result["historyComplete"]), (4, 1)
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()

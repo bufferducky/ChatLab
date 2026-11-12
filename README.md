@@ -14,58 +14,79 @@ English | [简体中文](./README.zh-CN.md)
 
 ## Personal fork: a local automated message workspace
 
-This is [bufferducky's personal fork](https://github.com/bufferducky/ChatLab) of [ChatLab](https://github.com/ChatLab/ChatLab). My goal is to keep using the normal chat clients while collecting QQ, WeCom (Enterprise WeChat), and eventually personal WeChat and Telegram messages into local ChatLab storage for browsing, search, AI analysis and daily digests. [完整中文方案](README.zh-CN.md).
+This is [bufferducky's personal fork](https://github.com/bufferducky/ChatLab) of [ChatLab](https://github.com/ChatLab/ChatLab). It automatically collects **QQ, WeCom (Enterprise WeChat), and Telegram** messages into local ChatLab storage for browsing, search and AI analysis, with scheduled daily digests planned next. [完整中文方案](README.zh-CN.md).
 
-**As of November 12, 2026, QQ and WeCom history imports, background collection and scheduled desktop sync have been verified on a local Mac.** The implementation is on [`feat/qq-local-source`](https://github.com/bufferducky/ChatLab/tree/feat/qq-local-source); `main` still contains the baseline preview, with this README documenting progress. The local build is named **ChatLab Personal** and uses this fork's GitHub update source. These integrations are not implied to be available in upstream installers.
+**As of November 12, 2026, all three collection paths—WeCom, QQ and Telegram—are implemented and verified on a local Mac.** This development branch includes the collectors, ChatLab integration and verification scripts. The local build is named **ChatLab Personal** and uses this fork's GitHub update source. These are this fork's integrations and local deployment settings; upstream installers do not necessarily include these collectors.
+
+**Personal WeChat collection is no longer planned.** Its strict platform restrictions and the risk of account restrictions or bans make it unsuitable for this fork's automated collection plan. WeCom remains a separate, implemented source.
 
 ### Collection design
 
 ```mermaid
 flowchart TD
-    QQ["Original QQ client"] --> QDB["nt_msg.db / profile_info.db / group_info.db + WAL"]
-    QDB --> QR["qq-local-interface: stable copy and authenticated decryption"]
-    QR --> QA["QQ adapter: scan native IDs, parse new records"]
-    WC["WeCom client"] --> WDB["Info.db / Session.db + WAL"]
-    WDB --> WR["wecom-agent: stable snapshot and decryption"]
-    WR --> WA["WeCom adapter: read and deduplicate"]
-    QA --> STORE["Separate SQLite archives: stable IDs and observation times"]
-    WA --> STORE
-    STORE --> API["Loopback Pull APIs with Bearer authentication"]
-    API --> CL["ChatLab: discover sessions, paginate and deduplicate imports"]
-    CL --> USE["Browse, search and analyze"]
-    USE -.-> TODO["Planned: group selection, scheduled digests and daily reading"]
+    subgraph QQ_SOURCE["QQ: collect every 3 hours"]
+        QQ["Original QQ client"] --> QDB["nt_msg.db / profile_info.db / group_info.db + WAL"]
+        QDB --> QR["qq-local-interface: stable copy and authenticated decryption"]
+        QR --> QA["Scan native IDs and parse new records"]
+        QA --> QS[("Independent QQ SQLite archive")]
+        QS --> QAPI["Loopback Pull API: 5035"]
+    end
+    subgraph WECOM_SOURCE["WeCom: collect every 10 minutes"]
+        WC["WeCom client"] --> WDB["Info.db / Session.db + WAL"]
+        WDB --> WR["wecom-agent: stable snapshot and decryption"]
+        WR --> WA["Read and deduplicate"]
+        WA --> WS[("Independent WeCom SQLite archive")]
+        WS --> WAPI["Loopback Pull API: 5034"]
+    end
+    subgraph TG_SOURCE["Telegram: collect every 3 hours"]
+        TG["Visible groups, channels, private and bot chats"] --> TR["Telethon / MTProto with local login authorization"]
+        TR --> TA["Last 7 days for new chats, then new message IDs"]
+        TA --> TS[("Independent TG SQLite archive and checkpoints")]
+        TS --> TAPI["Loopback Pull API: 5036"]
+    end
+    QAPI -->|"Pull every 180 minutes"| CL["ChatLab: Bearer auth, session discovery and pagination"]
+    WAPI -->|"Pull every 10 minutes"| CL
+    TAPI -->|"Pull every 180 minutes"| CL
+    CL --> IMPORT["Existing importer: stable-ID deduplication and consumer checkpoints"]
+    IMPORT --> DB[("Local ChatLab session databases")]
+    DB --> USE["Browse, query with SQL and analyze with AI"]
+    USE -.-> TODO["Planned: finer group selection, scheduled digests and daily reading"]
 ```
 
-QQ keys were captured once using an isolated debug copy; daily collection reuses the saved keys with the original client running, without a second QQ login. Initial history comes from an existing reader snapshot. Both adapters run independently of ChatLab and keep collecting while the desktop app is closed; ChatLab catches up when reopened. Stable source IDs identify accounts, conversations and messages. Observation times and pagination cursors allow newly discovered messages with old send times or smaller native IDs to be imported.
+QQ keys were captured once using an isolated debug copy; daily collection reuses the saved keys with the original client running, without a second QQ login. WeCom reuses the installed and authorized `wecom-agent`. Telegram reads visible cloud messages using Telethon and the user's MTProto authorization, without manual JSON exports. Separate LaunchAgents keep all three collectors running while ChatLab is closed; ChatLab pulls their archives when running.
+
+Accounts, conversations and messages use stable source IDs. Collection checkpoints and ChatLab consumer checkpoints are separate; Pull uses observation times and page cursors while retaining original send times. QQ and WeCom discover new local records; Telegram resumes after committed message IDs. Each newly discovered Telegram chat starts with its last seven days, then accumulates new messages. This is an initial lookback, not a rolling deletion policy.
 
 | Capability | Status |
 | --- | --- |
 | QQ groups and private chats | Verified: 36 nonempty conversations and 1,199,012 messages, zero field differences in reconciliation, zero additions on repeat pull, and successful scheduled desktop increments |
 | WeCom | Local groups, private chats and existing application notifications connected through a separate archive and automatic session discovery |
-| Personal WeChat and Telegram collection | Planned; upstream file-import support is separate from automated collection |
-| Account and group selection | Currently one source account and all nonempty conversations; sync status, manual sync and pause are available, finer selection is planned |
+| Telegram | All-chat discovery implemented: initial acceptance checked 85 chats, imported 10,276 messages from 61 chats active in the last week, with zero field differences and zero additions on repeat pull; subsequent collection runs every 3 hours |
+| Personal WeChat collection | No longer planned because of strict restrictions and the risk of account restrictions or bans |
+| Account and group selection | One source account per platform; all-chat discovery is enabled, and TG also supports selected peer IDs; status, manual sync and pause are available, with a unified fine-grained selection UI planned |
 | Scheduled AI digests | Planned: per-group and cross-group summaries, daily reading and links back to source evidence |
 
-Setup and evidence: [QQ integration](https://github.com/bufferducky/ChatLab/blob/feat/qq-local-source/integrations/qq/README.md), [WeCom integration](https://github.com/bufferducky/ChatLab/blob/feat/qq-local-source/integrations/wecom/README.md), and [QQ research](https://github.com/bufferducky/ChatLab/blob/feat/qq-local-source/integrations/qq/RESEARCH.md). The QQ reader requires a local fix for preallocated zero pages that has not been published upstream; installing the unmodified reader alone does not reproduce this setup.
+Setup and evidence: [QQ integration](integrations/qq/README.md), [WeCom integration](integrations/wecom/README.md), [Telegram integration](integrations/telegram/README.md), and [QQ research](integrations/qq/RESEARCH.md). The QQ reader requires a local fix for preallocated zero pages that has not been published upstream; installing the unmodified reader alone does not reproduce this setup.
 
 ### Current cadence and resource costs
 
 These are the **local deployment settings**, not script initialization defaults. Collector refresh and ChatLab pull are independent schedules:
 
 | Source | Collector wait after each refresh | ChatLab pull interval | Measured write reference per changed refresh |
-| ------ | --------------------------------- | --------------------- | -------------------------------------------- |
-| QQ     | 3 hours (10,800 seconds)          | 180 minutes           | About 2 GB                                   |
-| WeCom  | 10 minutes (600 seconds)          | 10 minutes            | About 61 MB                                  |
+| --- | --- | --- | --- |
+| QQ | 3 hours (10,800 seconds) | 180 minutes | About 2 GB |
+| WeCom | 10 minutes (600 seconds) | 10 minutes | About 61 MB |
+| Telegram | 3 hours (10,800 seconds) | 180 minutes | Writes new messages to its archive; no comparable disk-write measurement yet |
 
 QQ parses only newly discovered messages, but still copies and decrypts the full changed database and scans all native IDs. With a roughly 1 GB main database, two foreground refreshes took 7.8–10.9 seconds with peak RSS around 175 MiB; historical background samples were usually 41–76 seconds, and a busy source also caused retry failure. WeCom also rewrites decrypted databases after source changes; unchanged sources skip the large operations.
 
-Assuming continuous operation and a changed source on every cycle, roughly eight QQ and 144 WeCom refreshes imply about **25 GB/day or 9 TB/year** of collector writes. This is a conditional OS-accounted estimate, not permanent storage growth, NAND writes or an SSD lifespan prediction; retries can add writes. See [QQ performance measurements](https://github.com/bufferducky/ChatLab/blob/feat/qq-local-source/integrations/qq/PERFORMANCE.md). Visibility can approach the sum of the collection and pull intervals, plus processing time.
+Assuming continuous operation and a changed source on every cycle, roughly eight QQ and 144 WeCom refreshes imply about **25 GB/day or 9 TB/year** of collector writes, excluding Telegram. This is a conditional OS-accounted estimate, not permanent storage growth, NAND writes or an SSD lifespan prediction; retries can add writes. Telegram uses API requests instead of the local full-database copy/decryption path. See [QQ performance measurements](integrations/qq/PERFORMANCE.md). Visibility can approach the sum of the collection and pull intervals, plus processing time.
 
 ### Current limits
 
-- Only locally available history is collected. Existing imported messages are not replaced after edits, recalls or conversation renames.
+- QQ and WeCom collect locally synchronized records. TG reads account-visible cloud messages, starting each new chat with its last seven days; Secret Chats, deleted messages and inaccessible history are outside this path. Existing imported messages are not replaced after edits, recalls or conversation renames.
 - Media retains types, readable text or placeholders; full attachments, voice transcription and forwarded-message expansion are not complete. The QQ acceptance dataset includes 378 unknown-time records with timestamp 1, which may appear in 1970.
-- Pull APIs bind to loopback only (WeCom `5034`, QQ `5035`) and require Bearer authentication. Keys, tokens, plaintext snapshots and archives stay outside Git. AI analysis uses the configured model service; external model calls may send selected chat content to that service.
+- Pull APIs bind to loopback only (WeCom `5034`, QQ `5035`, TG `5036`) and require Bearer authentication. Keys, tokens, Telegram sessions, plaintext snapshots and archives stay outside Git. AI analysis uses the configured model service; external model calls may send selected chat content to that service.
 
 The upstream AGPL-3.0 license and attribution are retained. Never commit account credentials, API keys or real chat data to this repository. The upstream project overview follows below.
 
