@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useLayoutStore } from '@/stores/layout'
+import type { AnalysisSession } from '@/types/base'
+import SessionSourceInfo from './SessionSourceInfo.vue'
 import CaptureButton from '@/components/common/CaptureButton.vue'
 import TimeSelect from '@/components/common/TimeSelect.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
@@ -20,6 +22,7 @@ const timeRangeValue = defineModel<TimeRangeValue | null>('timeRangeValue', { re
 const props = withDefaults(
   defineProps<{
     title: string
+    session: AnalysisSession
     avatar?: string | null
     icon: string
     iconClass: string
@@ -94,6 +97,7 @@ const navigationItems = computed(() =>
       <CaptureButton v-else-if="showSessionActions" color="gray" />
     </template>
 
+    <SessionSourceInfo :key="session.id" :session="session" />
     <div
       class="mt-3 flex flex-col items-stretch gap-2 sm:min-h-8 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
     >

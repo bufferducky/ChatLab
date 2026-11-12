@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { shouldEnableContactsEntry } from '@openchatlab/core'
 import type { AnalysisSession } from '@/types/base'
+import PlatformBadge from '@/components/common/PlatformBadge.vue'
+import { filterSessionsByPlatform, getChatPlatform, getPlatformFilters } from '@/utils/chat-platform'
 import LazyAvatar from '@/components/common/avatar/LazyAvatar.vue'
 import SidebarButton from './sidebar/SidebarButton.vue'
 import SidebarCollapseButton from './sidebar/SidebarCollapseButton.vue'
@@ -60,7 +62,7 @@ const { toggleSidebar } = layoutStore
 const router = useRouter()
 const route = useRoute()
 const { controller: navigationLayoutController, snapshot: navigationLayoutSnapshot } = useNavigationLayout()
-const SESSION_ROW_SIZE = 44
+const sessionRowSize = computed(() => (isCollapsed.value ? 44 : 52))
 const SESSION_LIST_BOTTOM_PADDING = 32
 
 // 是否在首页
@@ -109,7 +111,7 @@ const showUpdateModal = ref(false)
 const isStartingUpdate = ref(false)
 
 // 搜索相关状态
-const showSearch = ref(false)
+const showSearch = ref(true)
 const searchQuery = ref('')
 const sessionListRef = ref<HTMLElement | null>(null)
 
@@ -120,21 +122,38 @@ const filterTabItems = computed(() => [
   { id: 'group', label: t('layout.filter.group') },
 ])
 
-// 过滤后的会话列表
-const filteredSortedSessions = computed(() => {
-  if (!searchQuery.value.trim()) {
-    return sortedSessions.value
-  }
+// Source counts respect the type and search filters, but not the selected platform.
+const platformFilter = ref('all')
+const searchMatchedSessions = computed(() => {
   const query = searchQuery.value.toLowerCase().trim()
-  return sortedSessions.value.filter((s) => s.name.toLowerCase().includes(query))
+  return sortedSessions.value.filter((session) => session.name.toLowerCase().includes(query))
 })
+const platformFilters = computed(() => getPlatformFilters(sessions.value, searchMatchedSessions.value))
+const filteredSortedSessions = computed(() =>
+  filterSessionsByPlatform(searchMatchedSessions.value, platformFilter.value)
+)
+
+function selectPlatform(platform: string) {
+  platformFilter.value = platform
+  const current = sessions.value.find((session) => session.id === route.params.id)
+  if (current && platform !== 'all' && getChatPlatform(current.platform).key !== platform) {
+    const first = filteredSortedSessions.value[0]
+    if (first) openSession(first)
+  }
+}
+
+function clearSessionFilters() {
+  platformFilter.value = 'all'
+  filterType.value = 'all'
+  searchQuery.value = ''
+}
 
 const sessionContentState = computed(() =>
   resolveSidebarSessionContentState({
     loadState: loadState.value,
     sessionCount: sessions.value.length,
     filteredSessionCount: filteredSortedSessions.value.length,
-    hasSearchQuery: searchQuery.value.trim().length > 0,
+    hasSearchQuery: searchQuery.value.trim().length > 0 || platformFilter.value !== 'all' || filterType.value !== 'all',
   })
 )
 
@@ -142,11 +161,14 @@ const sessionVirtualizer = useVirtualizer(
   computed(() => ({
     count: filteredSortedSessions.value.length,
     getScrollElement: () => sessionListRef.value,
-    estimateSize: () => SESSION_ROW_SIZE,
+    estimateSize: () => sessionRowSize.value,
     overscan: 8,
     getItemKey: (index: number) => filteredSortedSessions.value[index]?.id ?? index,
   }))
 )
+
+watch(isCollapsed, () => nextTick(() => sessionVirtualizer.value.measure()))
+watch([platformFilter, searchQuery, filterType], () => sessionVirtualizer.value.scrollToOffset(0))
 
 const virtualSessionItems = computed(() => sessionVirtualizer.value.getVirtualItems())
 const virtualSessionListHeight = computed(() => sessionVirtualizer.value.getTotalSize() + SESSION_LIST_BOTTOM_PADDING)
@@ -563,6 +585,8 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
               <UTooltip :text="t('layout.tooltip.search')" :content="{ side: 'bottom' }">
                 <UButton
                   :icon="showSearch ? 'i-heroicons-x-mark' : 'i-heroicons-magnifying-glass'"
+                  :aria-label="t('layout.tooltip.search')"
+                  :aria-expanded="showSearch"
                   color="neutral"
                   variant="ghost"
                   size="xs"
@@ -582,14 +606,48 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
             </div>
           </template>
         </CompactTabs>
+        <div class="mt-2 flex flex-wrap gap-1 px-4" :aria-label="t('layout.sources.filter')" role="group">
+          <button
+            type="button"
+            class="min-h-7 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            :class="
+              platformFilter === 'all'
+                ? 'border-gray-500 bg-gray-50 text-gray-900 dark:border-gray-400 dark:bg-white/5 dark:text-white'
+                : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/5'
+            "
+            :aria-pressed="platformFilter === 'all'"
+            @click="selectPlatform('all')"
+          >
+            {{ t('layout.sources.all') }}
+            <span class="ml-1 tabular-nums">{{ searchMatchedSessions.length }}</span>
+          </button>
+          <button
+            v-for="platform in platformFilters"
+            :key="platform.key"
+            type="button"
+            class="inline-flex min-h-7 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            :class="
+              platformFilter === platform.key
+                ? ['border-current', platform.badgeClass]
+                : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/5'
+            "
+            :aria-pressed="platformFilter === platform.key"
+            :aria-label="`${t(platform.labelKey)} (${platform.count})`"
+            @click="selectPlatform(platform.key)"
+          >
+            <UIcon :name="platform.icon" class="size-3" aria-hidden="true" />
+            {{ platform.key === 'wecom' ? t('layout.sources.wecomShort') : t(platform.labelKey) }}
+            <span class="tabular-nums">{{ platform.count }}</span>
+          </button>
+        </div>
         <!-- 搜索框 -->
         <div v-if="showSearch" class="mt-2 px-4">
           <UInput
             v-model="searchQuery"
             :placeholder="t('layout.searchPlaceholder')"
+            :aria-label="t('layout.searchPlaceholder')"
             icon="i-heroicons-magnifying-glass"
             size="sm"
-            autofocus
           />
         </div>
       </div>
@@ -643,6 +701,9 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
           class="py-8 text-center text-sm text-gray-500"
         >
           {{ t('layout.noSearchResult') }}
+          <div class="mt-2">
+            <UButton size="xs" variant="soft" @click="clearSessionFilters">{{ t('layout.sources.clear') }}</UButton>
+          </div>
         </div>
 
         <div
@@ -659,7 +720,7 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
             <UContextMenu :items="getContextMenuItems(virtualSessionAt(virtualItem.index))">
               <!-- 侧边栏折叠时，hover 显示完整会话名称（Tooltip 需绑定到真实 DOM） -->
               <UTooltip
-                :text="virtualSessionAt(virtualItem.index).name"
+                :text="`${virtualSessionAt(virtualItem.index).name} · ${t(getChatPlatform(virtualSessionAt(virtualItem.index).platform).labelKey)}`"
                 :disabled="!isCollapsed || !virtualSessionAt(virtualItem.index).name"
                 :content="{ side: 'right' }"
               >
@@ -671,8 +732,14 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                       : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200/20 dark:hover:bg-white/[0.04]',
                     isCollapsed
                       ? 'justify-center h-10 w-10 rounded-lg mx-auto'
-                      : 'h-10 w-full rounded-xl p-1.5 px-2.5 pl-1.5',
+                      : 'h-12 w-full rounded-xl p-1.5 px-2.5 pl-1.5',
                   ]"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="`${virtualSessionAt(virtualItem.index).name} · ${t(getChatPlatform(virtualSessionAt(virtualItem.index).platform).labelKey)}`"
+                  :aria-current="route.params.id === virtualSessionAt(virtualItem.index).id ? 'page' : undefined"
+                  @keydown.enter="openSession(virtualSessionAt(virtualItem.index))"
+                  @keydown.space.prevent="openSession(virtualSessionAt(virtualItem.index))"
                   @click="openSession(virtualSessionAt(virtualItem.index))"
                 >
                   <!-- 激活指示器：在展开和折叠下，都优雅地贴在侧边栏最左侧边缘 -->
@@ -701,6 +768,12 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                     ]"
                   />
 
+                  <PlatformBadge
+                    v-if="isCollapsed"
+                    :platform="virtualSessionAt(virtualItem.index).platform"
+                    icon-only
+                    class="absolute bottom-0.5 right-0"
+                  />
                   <!-- Session Info -->
                   <div v-if="!isCollapsed" class="min-w-0 flex-1">
                     <div class="flex items-center justify-between gap-1.5">
@@ -713,9 +786,12 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                         class="h-3 w-3 shrink-0 text-gray-400/80 rotate-45"
                       />
                     </div>
-                    <p class="truncate text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 leading-none">
-                      {{ t('layout.sessionInfo', { count: virtualSessionAt(virtualItem.index).messageCount }) }}
-                    </p>
+                    <div class="mt-1 flex min-w-0 items-center gap-1.5">
+                      <PlatformBadge :platform="virtualSessionAt(virtualItem.index).platform" />
+                      <span class="truncate text-[10px] leading-none text-gray-500 dark:text-gray-400">
+                        {{ t('layout.sessionInfo', { count: virtualSessionAt(virtualItem.index).messageCount }) }}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </UTooltip>

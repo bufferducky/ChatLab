@@ -143,5 +143,19 @@
     "logoutTitle": "Account",
     "logoutDesc": "Sign out of the current session",
     "logout": "Sign out"
+  },
+  "platform": {
+    "qq": "QQ",
+    "telegram": "Telegram",
+    "discord": "Discord",
+    "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
+    "google-chat": "Google Chat",
+    "line": "LINE",
+    "imessage": "iMessage",
+    "wecom": "WeCom",
+    "weixin": "WeChat",
+    "mixed": "Multiple platforms",
+    "unknown": "Unknown source"
   }
 }

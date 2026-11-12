@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import PlatformBadge from '@/components/common/PlatformBadge.vue'
+import { getChatPlatform } from '@/utils/chat-platform'
 import { storeToRefs } from 'pinia'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { useToast } from '@/composables/useToast'
@@ -337,28 +339,8 @@ function getSessionAvatarText(session: AnalysisSession): string {
   }
 }
 
-// 平台显示配置
-const PLATFORM_CONFIG: Record<string, { label: string; class: string }> = {
-  qq: { label: 'QQ', class: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  weixin: { label: '微信', class: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
-  discord: { label: 'Discord', class: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
-  whatsapp: {
-    label: 'WhatsApp',
-    class: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  },
-  instagram: { label: 'Instagram', class: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' },
-  line: { label: 'LINE', class: 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-300' },
-  unknown: { label: '未知', class: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' },
-}
-
-// 获取平台标签
 function getPlatformLabel(platform: string): string {
-  return PLATFORM_CONFIG[platform]?.label || platform
-}
-
-// 获取平台样式类
-function getPlatformClass(platform: string): string {
-  return PLATFORM_CONFIG[platform]?.class || PLATFORM_CONFIG.unknown.class
+  return t(getChatPlatform(platform).labelKey)
 }
 
 // 开始编辑名称
@@ -716,12 +698,7 @@ onMounted(() => {
 
             <!-- 平台 -->
             <div class="w-20 text-center">
-              <span
-                class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                :class="getPlatformClass(session.platform)"
-              >
-                {{ getPlatformLabel(session.platform) }}
-              </span>
+              <PlatformBadge :platform="session.platform" />
             </div>
 
             <!-- 我是谁 -->

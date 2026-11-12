@@ -49,5 +49,32 @@
   "sessionInfo": "{count} 条消息",
   "footer": {
     "settings": "设置"
+  },
+  "sources": {
+    "filter": "按消息来源筛选",
+    "all": "全部来源",
+    "wecomShort": "企微",
+    "more": "更多来源",
+    "clear": "清除筛选",
+    "details": "来源详情",
+    "platform": "聊天平台",
+    "owner": "记录所有者",
+    "importedAt": "导入时间",
+    "unavailable": "暂无记录",
+    "unnamed": "未命名数据源",
+    "automatic": "自动同步",
+    "paused": "已暂停",
+    "interval": "拉取间隔",
+    "minutes": "每 {count} 分钟",
+    "result": "最近拉取结果",
+    "progress": "增量读取位置",
+    "progressHint": "读取位置用于补拉消息，不代表最近一次同步的执行时间；暂停后仍保留原平台和历史记录。",
+    "unlinked": "未关联自动同步数据源。平台来自会话记录；仅凭此信息无法确定原始导入方式。",
+    "loadFailed": "数据源详情暂时无法加载，平台信息仍可查看。",
+    "status": {
+      "idle": "尚未完成拉取",
+      "success": "成功",
+      "error": "失败，请在自动同步设置中查看"
+    }
   }
 }
