@@ -285,6 +285,9 @@ export class PullEngine {
             if (!fileContainsMessages(tempFile) && sync0?.hasMore === false) {
               cleanupTempFile(tempFile)
               if (sync0?.nextSince !== undefined) nextPullSince = Math.max(nextPullSince, sync0.nextSince)
+              // Empty incremental responses are normal. Only initial preparation
+              // needs retries; sleeping per idle chat makes large sources unusable.
+              if (since > 0 && sess.targetSessionId) break
               const retryDelays = [2000, 3000, 5000]
               let retrySuccess = false
               let retryHasMore = false
@@ -330,7 +333,6 @@ export class PullEngine {
                   const errMsg = 'Full resync failed'
                   this.logger.error(`[Pull] Full resync already attempted for "${sess.name}", aborting`)
                   this.dsManager.updateSession(sourceId, sess.id, {
-                    lastPullAt: Math.floor(Date.now() / 1000),
                     lastStatus: 'error',
                     lastError: errMsg,
                   })
@@ -344,7 +346,6 @@ export class PullEngine {
 
                   const errMsg = retryResult.error || 'Import failed'
                   this.dsManager.updateSession(sourceId, sess.id, {
-                    lastPullAt: Math.floor(Date.now() / 1000),
                     lastStatus: 'error',
                     lastError: errMsg,
                   })
@@ -411,7 +412,6 @@ export class PullEngine {
             const errMsg = 'Full resync failed'
             this.logger.error(`[Pull] Full resync already attempted for "${sess.name}", aborting`)
             this.dsManager.updateSession(sourceId, sess.id, {
-              lastPullAt: Math.floor(Date.now() / 1000),
               lastStatus: 'error',
               lastError: errMsg,
             })
@@ -425,7 +425,6 @@ export class PullEngine {
 
             const errMsg = result.error || 'Import failed'
             this.dsManager.updateSession(sourceId, sess.id, {
-              lastPullAt: Math.floor(Date.now() / 1000),
               lastStatus: 'error',
               lastError: errMsg,
             })
@@ -503,7 +502,6 @@ export class PullEngine {
         // A failed config commit must not be retried as an error-status write advancing the cursor.
         if (error instanceof DataSourceConfigError) throw error
         this.dsManager.updateSession(sourceId, sess.id, {
-          lastPullAt: Math.floor(Date.now() / 1000),
           lastStatus: 'error',
           lastError: errMsg,
         })
@@ -524,6 +522,49 @@ export class PullEngine {
     }
   }
 
+  private async discoverSessions(ds: DataSource): Promise<DataSource> {
+    if (!ds.autoDiscoverSessions) return ds
+    const sessions: Array<{ name: string; remoteSessionId: string }> = []
+    const cursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const url = new URL(`${ds.baseUrl}/sessions`)
+      if (cursor) url.searchParams.set('cursor', cursor)
+      const response = await fetch(url, {
+        headers: ds.token ? { Authorization: `Bearer ${ds.token}` } : {},
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!response.ok) throw new Error(`Session discovery returned HTTP ${response.status}`)
+      const body = (await response.json()) as {
+        sessions?: Array<{ id: string; name: string; type: string }>
+        page?: { hasMore?: boolean; nextCursor?: string }
+      }
+      if (!Array.isArray(body.sessions)) throw new Error('Invalid session discovery response')
+      for (const session of body.sessions) {
+        if ((session.type === 'group' || session.type === 'private') && session.id && session.name) {
+          sessions.push({ name: session.name, remoteSessionId: String(session.id) })
+        }
+      }
+      cursor = body.page?.hasMore ? body.page.nextCursor : undefined
+      if (body.page?.hasMore && (!cursor || cursors.has(cursor))) {
+        throw new Error('Session discovery did not advance its cursor')
+      }
+      if (cursor) cursors.add(cursor)
+      if (cursors.size >= MAX_PAGES_PER_PULL) throw new Error('Session discovery page limit reached')
+    } while (cursor)
+    // Re-read after network I/O so disabling/deleting a source takes effect before subscribing.
+    const current = this.dsManager.get(ds.id)
+    if (!current || !current.enabled) return { ...ds, sessions: [] }
+    if (!current.autoDiscoverSessions) return current
+    const known = new Set(current.sessions.map((s) => s.remoteSessionId))
+    const added = sessions.filter((s) => !known.has(s.remoteSessionId))
+    if (added.length) {
+      this.dsManager.addSessions(ds.id, added)
+      this.notifier.onSessionListChanged()
+    }
+    return this.dsManager.get(ds.id) ?? current
+  }
+
   async pullAllSessions(ds: DataSource): Promise<void> {
     if (this.pullingSourceIds.has(ds.id)) {
       this.logger.info(`[Pull] Skipping pullAllSessions for "${ds.baseUrl}": pull already in progress`)
@@ -531,6 +572,7 @@ export class PullEngine {
     }
     this.pullingSourceIds.add(ds.id)
     try {
+      ds = await this.discoverSessions(ds)
       let sourceUnavailable = false
       for (let index = 0; index < ds.sessions.length; index++) {
         const sess = ds.sessions[index]
@@ -549,10 +591,8 @@ export class PullEngine {
   }
 
   private markRemainingSessionsSourceUnavailable(ds: DataSource, startIndex: number, detail: string): void {
-    const now = Math.floor(Date.now() / 1000)
     for (const sess of ds.sessions.slice(startIndex)) {
       this.dsManager.updateSession(ds.id, sess.id, {
-        lastPullAt: now,
         lastStatus: 'error',
         lastError: detail,
       })
@@ -572,7 +612,7 @@ export class PullEngine {
   }
 
   async triggerPull(sourceId: string, sessionId?: string): Promise<{ success: boolean; error?: string }> {
-    const ds = this.dsManager.get(sourceId)
+    let ds = this.dsManager.get(sourceId)
     if (!ds) return { success: false, error: 'Data source not found' }
 
     if (sessionId) {
@@ -590,6 +630,7 @@ export class PullEngine {
     }
     this.pullingSourceIds.add(sourceId)
     try {
+      ds = await this.discoverSessions(ds)
       const errors: string[] = []
       let sourceUnavailable = false
       for (let index = 0; index < ds.sessions.length; index++) {

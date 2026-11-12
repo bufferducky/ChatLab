@@ -116,6 +116,7 @@ export class DataSourceManager {
     token: string
     intervalMinutes: number
     pullLimit?: number
+    autoDiscoverSessions?: boolean
   }): DataSource {
     const sources = this.loadAll()
     const ds: DataSource = {
@@ -126,6 +127,7 @@ export class DataSourceManager {
       intervalMinutes: partial.intervalMinutes,
       pullLimit: partial.pullLimit || 1000,
       enabled: true,
+      autoDiscoverSessions: partial.autoDiscoverSessions ?? false,
       createdAt: Math.floor(Date.now() / 1000),
       sessions: [],
     }
@@ -145,6 +147,7 @@ export class DataSourceManager {
     if (updates.intervalMinutes !== undefined) ds.intervalMinutes = updates.intervalMinutes
     if (updates.pullLimit !== undefined) ds.pullLimit = updates.pullLimit
     if (updates.enabled !== undefined) ds.enabled = updates.enabled
+    if (updates.autoDiscoverSessions !== undefined) ds.autoDiscoverSessions = updates.autoDiscoverSessions
     this.saveAll(sources)
     return ds
   }

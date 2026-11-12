@@ -149,6 +149,24 @@ function createEngine(options: {
 }
 
 describe('PullEngine', () => {
+  it('finishes an idle incremental chat in one request without import or retries', async () => {
+    const session = createSession()
+    const source = createDataSource()
+    source.sessions = [session]
+    const updates: Array<{ sessionId: string; updates: Partial<ImportSession> }> = []
+    const calls: string[] = []
+    const engine = createEngine({
+      files: [writeTempJson({ messages: [], sync: { hasMore: false, nextSince: 5000 } })],
+      dataSource: source,
+      fetchCalls: calls,
+      sessionUpdates: updates,
+      importResult: { success: false, newMessageCount: 0, error: 'Empty page must not be imported' },
+    })
+    const result = await engine.executePullSession(source.id, source, session)
+    assert.equal(result.success, true)
+    assert.equal(calls.length, 1)
+    assert.equal(updates.at(-1)?.updates.lastPullAt, 4940)
+  })
   it('config write failure reports failure without advancing the cursor or leaving progress running', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatlab-pull-config-'))
     t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -288,6 +306,7 @@ describe('PullEngine', () => {
 
   it('keeps the pull cursor stable when a retry-page import is deferred', async () => {
     const session = createSession()
+    session.lastPullAt = 0
     const dataSource = createDataSource()
     dataSource.sessions = [session]
     const emptyInitialPage = writeTempJson({
@@ -326,6 +345,7 @@ describe('PullEngine', () => {
 
   it('reports retry import failure instead of marking the pull successful', async () => {
     const session = createSession()
+    session.lastPullAt = 0
     const dataSource = createDataSource()
     dataSource.sessions = [session]
     const emptyInitialPage = writeTempJson({
@@ -603,6 +623,7 @@ describe('PullEngine', () => {
     await engine.pullAllSessions(dataSource)
 
     assert.deepEqual(fetchCalls, ['remote_a'])
+    assert.ok(sessionUpdates.every((item) => item.updates.lastPullAt === undefined))
     assert.equal(warns.length, 1)
     assert.match(warns[0], /Source http:\/\/example\.test\/api\/v1 unavailable: ECONNREFUSED 127\.0\.0\.1:5031/)
     assert.match(warns[0], /skipped 3 sessions/)

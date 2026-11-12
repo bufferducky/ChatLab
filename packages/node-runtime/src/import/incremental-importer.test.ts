@@ -157,6 +157,38 @@ function createDeps(dbPath: string): IncrementalImportDeps {
   }
 }
 
+test('message-only ChatLab Pull increments preserve the existing conversation name', async (t) => {
+  const root = makeTempDir()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const dbPath = path.join(root, 'session.db')
+  const file = path.join(root, 'pull-random-name.json')
+  seedSessionDb(dbPath)
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      chatlab: { version: '0.0.2', exportedAt: 1780330900 },
+      messages: [
+        {
+          sender: 'alice',
+          accountName: 'Alice',
+          timestamp: 1780330832,
+          type: 0,
+          content: 'new message',
+          platformMessageId: 'wecom-1',
+        },
+      ],
+    })
+  )
+  const result = await incrementalImport('session', file, createDeps(dbPath))
+  assert.equal(result.success, true)
+  assert.equal(result.newMessageCount, 1)
+  const db = openBetterSqliteDatabase(dbPath, { readonly: true, nativeBinding })
+  const meta = db.prepare('SELECT name FROM meta').get() as { name: string }
+  db.close()
+  assert.equal(meta.name, 'Existing Session')
+  assert.equal(result.updates?.metaUpdated, false)
+})
+
 test('imports ChatLab JSONL messages with numeric string timestamps consistently with analysis', async (t) => {
   const tempDir = makeTempDir()
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }))
