@@ -10,16 +10,16 @@
 
 ## 本机运行
 
-- 使用 `/Users/ys/openProjects/qq-local-interface/.venv/bin/python`，其安装了本机预分配页面兼容修复。
+- 使用已安装 `qq-local-interface` 的 Python 虚拟环境；下例假设读取器位于 `~/openProjects/qq-local-interface`。本机读取器包含尚未发布到上游的预分配零页兼容修复，具体条件见 [调研记录](RESEARCH.md#已授权的重签试验与本机兼容修复)，不能把原版读取器视为已经包含此修复。
 - 默认读取 `~/Library/Application Support/qq-local-interface/sources/personal-qq/`。需先有有效配置、三个核心库密钥和成功快照。
 - ChatLab 工程使用 Node 24 和已有 pnpm 依赖。
 
 从仓库根目录运行：
 
 ```bash
-/Users/ys/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py init
-/Users/ys/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py bootstrap
-/Users/ys/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py serve
+~/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py init --interval 10800
+~/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py bootstrap
+~/openProjects/qq-local-interface/.venv/bin/python integrations/qq/bridge.py serve
 ```
 
 退出 ChatLab 后执行首次导入，完成后重新打开桌面端：
@@ -34,7 +34,9 @@ python3 integrations/qq/audit.py --database-dir ~/.chatlab/data/databases
 
 ## 自动同步与暂停
 
-本机部署使用 LaunchAgent `io.github.bufferducky.chatlab-qq`，登录后启动。服务每 5 分钟检查源库变化；无变化直接跳过，有变化仅对稳定副本解密和新消息解析。ChatLab 的拉取周期独立配置（2026-11-12 性能复核时为 20 分钟），并自动发现新会话。设置 → 自动化 → 自动同步中可查看 `QQ（本机全部会话）`、立即同步或暂停。
+本机部署使用 LaunchAgent `io.github.bufferducky.chatlab-qq`，登录后启动。**2026-11-12 最新配置：采集服务每轮结束后等待 3 小时（10,800 秒），ChatLab 每 180 分钟拉取一次。** 无变化直接跳过，有变化对稳定副本整库解密、扫描全部原生 ID，仅解析新消息。设置 → 自动化 → 自动同步中可查看 `QQ（本机全部会话）`、调整拉取间隔、立即同步或暂停，并自动发现新会话。
+
+上面的 `init --interval 10800` 只设置新建采集配置；已有配置不会被 `init` 覆盖。已有部署应在停止服务后，将 `~/.local/share/chatlab-qq/config.json` 的 `interval` 改为 `10800`，再启动服务。ChatLab 的拉取间隔需另外设置为 180 分钟；脚本初始化默认仍是采集 300 秒、注册拉取 5 分钟，运行示例不会自动改写拉取周期。
 
 ```bash
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.chatlab-qq.plist
@@ -52,8 +54,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.ch
 - 文本保留正文和换行；媒体保留可读文字及类型，没有可读文字时使用占位。混合或尚未映射的类型为 99，不代表完整媒体可播放、附件已导入或转发内层已展开。
 - 首版只追加消息；已采集消息的编辑、撤回、后续完善及会话改名不覆盖 ChatLab 既有记录。源库缺失的历史不会删除本地存档。联系人和群信息用于新消息的名称与身份解析。
 - 刷新失败保留上次成功存档，`/health.error` 显示错误类别，稍后重试；`lastRefresh` 用于判断新鲜度。就绪并不代表所有辅助库齐全，当前只读取三个核心库。
-- 每次有变化仍需复制和解密约 1 GB 的主库，并扫描全部原生 ID；这不是只处理变化页。默认 5 分钟轮询，不能宣称实时。临时副本随刷新结束删除，不生成持续增长的完整快照代次；历史存档本身会随消息增长。
-- 本机一次前台增量刷新约 12 秒；后台服务与百万条导入并行时，一次刷新约 233 秒。轮询间隔从刷新结束后计算，ChatLab 还有独立的拉取周期，因此实际可见延迟可能超过 5 分钟。
+- 每次有变化仍需复制和解密约 1 GB 的主库，并扫描全部原生 ID；这不是只处理变化页。当前低频配置用于历史存档与分析。临时副本随刷新结束删除，不生成持续增长的完整快照代次；历史存档本身会随消息增长。
+- 本机一次前台增量刷新约 12 秒；后台服务与百万条导入并行时，一次刷新约 233 秒。轮询间隔从刷新结束后计算，ChatLab 还有独立的拉取周期，当前消息可见延迟可能接近 6 小时，另加处理耗时。
 - 读取器已有完整快照不会由本适配器自动更新；QQ 调试副本、备份和已有快照均保留。密钥失效时需在读取器侧处理，不会自动调试或重签 QQ。
 
 ## 检查

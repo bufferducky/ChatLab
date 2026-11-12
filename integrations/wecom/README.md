@@ -7,7 +7,7 @@
     → wecom-agent 稳定快照及解密
     → 本适配器独立 SQLite 存档（保留稳定 ID 和首次观察时间）
     → 仅本机 127.0.0.1:5034/api/v1，Bearer 鉴权
-    → ChatLab 自动发现全部会话，每分钟增量拉取
+    → ChatLab 自动发现全部会话，按独立周期增量拉取
 ```
 
 ## 前提与启动
@@ -20,7 +20,7 @@
 从仓库根目录运行：
 
 ```bash
-~/.local/share/wecom-agent/.venv/bin/python integrations/wecom/bridge.py init
+~/.local/share/wecom-agent/.venv/bin/python integrations/wecom/bridge.py init --interval 600
 ~/.local/share/wecom-agent/.venv/bin/python integrations/wecom/bridge.py refresh
 ~/.local/share/wecom-agent/.venv/bin/python integrations/wecom/bridge.py serve
 ```
@@ -34,7 +34,11 @@ pnpm exec tsx integrations/wecom/connect.mts verify
 
 安装包含本分支同步引擎的桌面版本后，在“设置 → 自动化 → 自动同步”可查看“企业微信（本机全部会话）”，暂停/恢复及立即同步。`autoDiscoverSessions=true` 明确表示导入此数据源后续出现的全部群聊和私聊；单独移除订阅会在下次发现时重新加入，停止同步请暂停整个数据源。其它数据源默认不启用自动发现。
 
-本次本机部署通过 LaunchAgent `io.github.bufferducky.chatlab-wecom` 托管适配服务，登录系统后启动；服务每 30 秒检查源库变化，ChatLab 开启时每分钟拉取。私有数据在 `~/.local/share/chatlab-wecom/`，包含配置、独立存档和仅含统计的验证报告；凭证、明文及用户聊天不会写入仓库。服务脚本从本仓库运行，移动仓库后须更新 LaunchAgent 路径。
+本次本机部署通过 LaunchAgent `io.github.bufferducky.chatlab-wecom` 托管适配服务，登录系统后启动；**2026-11-12 最新配置：服务每轮结束后等待 10 分钟（600 秒），ChatLab 开启时每 10 分钟拉取。** 私有数据在 `~/.local/share/chatlab-wecom/`，包含配置、独立存档和仅含统计的验证报告；凭证、明文及用户聊天不会写入仓库。服务脚本从本仓库运行，移动仓库后须更新 LaunchAgent 路径。
+
+`init --interval 600` 只设置新建采集配置，不覆盖已有配置。已有部署应先停止服务，将 `~/.local/share/chatlab-wecom/config.json` 的 `interval` 改为 `600`，再启动；ChatLab 的拉取间隔在“设置 → 自动化 → 自动同步”另设为 10 分钟。脚本初始化默认仍是采集 30 秒、注册拉取 1 分钟，不能将默认值与本机部署值混淆。
+
+有变化时仍会重新解密数据库，本机两轮测得系统记账写入约 61 MB／轮，无变化跳过。全天每轮都有变化、约 144 轮时粗算约 8.8 GB／天；它不是每日新增占用空间或 SSD 实际闪存写入。采集和拉取是两个周期，消息可见延迟可能接近 20 分钟，另加处理耗时。
 
 暂停/恢复已部署的后台服务：
 
