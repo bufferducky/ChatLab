@@ -16,7 +16,10 @@ import relationships from './relationships.json'
 import insight from './insight.json'
 import browser from './browser.json'
 
+import hotspots from './hotspots.json'
+
 export default {
+  hotspots,
   common,
   layout,
   settings,

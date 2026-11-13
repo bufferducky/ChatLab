@@ -549,6 +549,14 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
           @click="openGlobalAI"
         />
 
+        <SidebarButton
+          v-if="props.backendFeatures"
+          icon="i-lucide-radio"
+          :title="t('hotspots.title')"
+          :active="route.name === 'hotspots'"
+          @click="router.push({ name: 'hotspots' })"
+        />
+
         <template v-if="showInsightNavigation">
           <SidebarButton
             v-for="item in resolvedPrimaryNavigation"
