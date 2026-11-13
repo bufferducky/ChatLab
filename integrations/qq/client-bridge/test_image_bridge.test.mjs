@@ -35,7 +35,7 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
   const listeners = []
   const loginListeners = []
   const downloads = []
-  const options = { delay: 0, neverComplete: false, writeBytes: null }
+  const options = { delay: 0, neverComplete: false, writeBytes: null, fileErrCode: 0, fileSrvErrCode: 0 }
   const service = {
     addKernelMsgListener(listener) {
       listeners.push(listener)
@@ -68,7 +68,13 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
       if (options.neverComplete) return {}
       const complete = () => {
         fs.writeFileSync(args.filePath, options.writeBytes || image)
-        const data = { msgId: args.msgId, msgElementId: args.elementId, filePath: args.filePath, fileErrCode: 0 }
+        const data = {
+          msgId: args.msgId,
+          msgElementId: args.elementId,
+          filePath: args.filePath,
+          fileErrCode: options.fileErrCode,
+          fileSrvErrCode: options.fileSrvErrCode,
+        }
         for (const listener of listeners) {
           try {
             listener.onRichMediaDownloadComplete(data)
@@ -96,9 +102,9 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
     service,
     session: { getMsgService: () => service },
     wrapper: { NodeIKernelLoginService: { get: () => login } },
-    login(listener) {
+    login(event = 'onUserLoggedIn') {
       assert.equal(loginListeners.length, 1)
-      loginListeners[0].onUserLoggedIn({ uin, uid, nickName: 'Synthetic' })
+      loginListeners[0][event]({ uin, uid, nickName: 'Synthetic' })
     },
     logout() {
       loginListeners[0].onLogoutSucceed()
@@ -155,6 +161,35 @@ const validRequest = () => ({
   msgId: '9007199254740993',
   imageIndex: 0,
   expectedMd5: md5(IMAGE),
+})
+
+test('QQ 7 quick login success makes the bridge ready and permits image downloads', async (t) => {
+  const { qq, bridge, baseUrl, discovery } = await startBridge(t)
+  assert.equal(bridge.healthPayload().ready, false)
+  qq.login('onQRCodeLoginSucceed')
+  assert.equal(bridge.healthPayload().ready, true)
+  const response = await call(baseUrl, discovery.token, 'POST', '/v1/images/fetch', validRequest())
+  assert.equal(response.status, 200)
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), IMAGE)
+  qq.logout()
+  assert.equal(bridge.healthPayload().ready, false)
+})
+
+test('native string zero completion codes return verified images while nonzero codes fail', async (t) => {
+  const { qq, baseUrl, discovery } = await startBridge(t)
+  qq.login()
+  for (const [fileErrCode, fileSrvErrCode, status] of [
+    ['0', '0', 200],
+    ['1', '0', 502],
+    ['0', '1', 502],
+  ]) {
+    qq.options.fileErrCode = fileErrCode
+    qq.options.fileSrvErrCode = fileSrvErrCode
+    const response = await call(baseUrl, discovery.token, 'POST', '/v1/images/fetch', validRequest())
+    assert.equal(response.status, status)
+    if (status === 200) assert.deepEqual(Buffer.from(await response.arrayBuffer()), IMAGE)
+    else assert.equal((await response.json()).code, 'QQ_DOWNLOAD_FAILED')
+  }
 })
 
 test('validateFetchRequest accepts exactly the documented shape and rejects everything else', () => {

@@ -52,9 +52,14 @@ function startBridge(wrapper) {
   state.started = true
   try {
     const { createBridge } = require('./image-bridge.cjs')
+    const configured = readJson(path.join(appDir, 'chatlab-image-bridge.json')) || {}
+    const clientPackage = readJson(path.join(appDir, 'package.json')) || {}
     const bridge = createBridge({
       wrapper,
       session: state.session,
+      home: typeof configured.home === 'string' ? configured.home : undefined,
+      qqRoot: typeof configured.dataRoot === 'string' ? configured.dataRoot : undefined,
+      qqVersion: typeof clientPackage.version === 'string' ? clientPackage.version : undefined,
       electronVersion: process.versions.electron || null,
     })
     state.bridge = bridge
@@ -68,15 +73,6 @@ function startBridge(wrapper) {
             // Exit must stay clean.
           }
         })
-        for (const signal of ['SIGTERM', 'SIGINT']) {
-          process.once(signal, () => {
-            try {
-              bridge.shutdownSync()
-            } catch {
-              // Exit must stay clean.
-            }
-          })
-        }
       },
       (error) => {
         state.error = error && error.code

@@ -11,6 +11,7 @@
 | `bootstrap.cjs` | 客户端入口：拦截 `wrapper.node` 取得 QQ 自己创建的 Session，启动桥接，再加载原启动器；失败不影响 QQ 启动 |
 | `image-bridge.cjs` | 回环 HTTP 服务、发现文件、健康状态、账号与数据目录核对、原生消息查询、下载完成监听、并发与超时 |
 | `test_image_bridge.test.mjs` | 合成 QQ 对象与临时目录的回归测试，不登录真实账号 |
+| `bootstrap.test.mjs` | 验证无终端变量启动时的数据来源配置与正常退出信号 |
 
 ## 加载方式
 
@@ -28,6 +29,8 @@
 ```
 
 也可用环境变量 `CHATLAB_QQ_LAUNCHER` 指定原启动器；`CHATLAB_QQ_BRIDGE=0` 可只加载原客户端、不启动桥接，用于排查启动问题。
+
+从访达启动不会继承终端里的环境变量。使用独立账号数据时，应在 `chatlab-image-bridge.json` 中同时保存绝对路径 `dataRoot`（QQ 实际运行的数据根目录）与 `home`（采集器目录），并让 QQ 的运行数据入口指向同一根目录。桥接报告的版本来自实际加载资源旁的 `package.json`。采集器的 `database_dir` 也必须指向这份账号目录，不得只修改健康检查返回值绕过来源核对。
 
 macOS 上副本需要可启动的签名状态。实验副本使用自签名并保留原版；日常方案仍需单独确定签名、更新与回退流程，不能直接把实验副本当成正式安装。
 
@@ -56,6 +59,8 @@ curl -sS -H "Authorization: Bearer $token" http://127.0.0.1:$(python3 -c 'import
 
 `ready=true` 表示已取得会话、QQ 在线、账号数据目录可核对且原生接口具备取图能力。`sessionCaptured=true` 单独为真不代表在线；发现文件存在也不代表服务可用，采集器始终先做健康检查。
 
+QQ 7.0.1-52892 实机登录成功会触发 `onQRCodeLoginSucceed`；桥接同时处理它与 `onUserLoggedIn`。原生下载完成回调中的成功码可能是字符串 `"0"`，与数字 `0` 等价；非零值仍按失败处理。退出信号交由 QQ 自身处理，桥接只在进程退出时清理自身文件。
+
 `GET /v1/health` 与 `POST /v1/images/fetch` 都要求 Bearer token；只绑定回环地址，不开放 CORS 或任意路径、URL、表达式、IPC 方法。请求体上限 16 KiB，单张图片上限 50 MiB，最多同时 2 个原生下载，单次下载 50 秒，超出并发返回 `429` 与 `Retry-After: 2`。
 
 ## 已知限制
@@ -77,7 +82,15 @@ curl -sS -H "Authorization: Bearer $token" http://127.0.0.1:$(python3 -c 'import
 ## 测试
 
 ```bash
-node --test integrations/qq/client-bridge/test_image_bridge.test.mjs
+node --test integrations/qq/client-bridge/*.test.mjs
 ```
 
 覆盖鉴权、请求形状、发现与健康状态、下载校验、并发合并、并发上限、超时后额度占用、登出和发现文件清理。
+
+## 本机验收记录（2026-11-13）
+
+QQ 7.0.1-52892 / Electron 40.0.0 的桥接副本已实测：群聊四张对照图片、私聊一张图片、同消息两张图片均通过采集器取图和 MD5 校验；私聊另通过原生桥接接口直接校验。已安装的 ChatLab Desktop 中，DBX 消息 `17757` 的预览与原图正常显示。共用 HTTP 图片路由在在线时返回清单、WebP 预览与原图；退出 QQ 并暂停采集器后，已缓存的清单、预览仍返回 200，原图请求明确失败。
+
+QQ 正常退出后发现文件被清理；不带桥接环境变量重启后 `ready=true`，账号、数据目录与采集器一致，只保留一个 QQ 主进程。独立数据副本运行期间，QQ 未打开原始容器中的聊天数据库。以上仅为样本验收，不代表任意历史图片都能恢复；部分更早图片仍下载失败。页面同时加载多张未缓存图片时可能收到并发已满提示，可稍后重试。
+
+本机保留原版应用与原始账号数据，采集器已切换到桥接副本使用的账号数据。切回原版时应同时恢复采集器数据来源；不要把两份数据直接覆盖合并。客户端更新与长期维护仍需单独验证。

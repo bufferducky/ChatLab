@@ -283,7 +283,9 @@ class ImageBridge {
       {},
       {
         get: (_target, property) => {
-          if (property === 'onUserLoggedIn') return (info) => this.handleLoggedIn(info)
+          if (property === 'onUserLoggedIn' || property === 'onQRCodeLoginSucceed') {
+            return (info) => this.handleLoggedIn(info)
+          }
           if (
             property === 'onLoginDisConnected' ||
             property === 'onLogoutSucceed' ||
@@ -844,7 +846,7 @@ class ImageBridge {
   finishEntryFromEvent(entry, data) {
     const failureCode = data && data.fileErrCode
     const serviceCode = data && data.fileSrvErrCode
-    if ((failureCode && failureCode !== 0) || (serviceCode && serviceCode !== 0)) {
+    if ((failureCode && String(failureCode) !== '0') || (serviceCode && String(serviceCode) !== '0')) {
       this.finishEntry(entry, new BridgeError(502, 'QQ_DOWNLOAD_FAILED'), null)
       return
     }
