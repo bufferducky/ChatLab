@@ -46,6 +46,16 @@ def convert_message(item, name, origin):
             'timestamp': stamp, 'type': TYPE_MAP.get(item['kind'], 99), 'content': content}
 
 
+def native_peer(conversation):
+    """Return the QQ-native conversation id used by getMsgsByMsgId/downloadRichMedia."""
+    try:
+        payload = json.loads(conversation['payload'])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
+    value = payload.get('native_id') if isinstance(payload, dict) else None
+    return str(value) if value not in (None, '') else None
+
+
 class Cache:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -58,7 +68,7 @@ class Cache:
                 CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT);
                 CREATE TABLE IF NOT EXISTS sessions(
                     id TEXT PRIMARY KEY,name TEXT,kind TEXT,message_count INTEGER DEFAULT 0,
-                    last_stamp INTEGER,member_count INTEGER DEFAULT 0);
+                    last_stamp INTEGER,member_count INTEGER DEFAULT 0,native_id TEXT);
                 CREATE TABLE IF NOT EXISTS messages(
                     seq INTEGER PRIMARY KEY,id TEXT UNIQUE,session_id TEXT,observed INTEGER,
                     stamp INTEGER,sender TEXT,payload TEXT,native_table TEXT,native_id INTEGER,
@@ -67,6 +77,8 @@ class Cache:
                 CREATE INDEX IF NOT EXISTS session_observed ON messages(session_id,observed,seq);
                 CREATE TABLE IF NOT EXISTS image_metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             ''')
+            if 'native_id' not in {row[1] for row in db.execute('PRAGMA table_info(sessions)')}:
+                db.execute('ALTER TABLE sessions ADD COLUMN native_id TEXT')
         self.path.chmod(0o600)
 
     @contextlib.contextmanager
@@ -91,7 +103,9 @@ class Cache:
                 latest_stamp = int(datetime.fromisoformat(latest[0].replace('Z', '+00:00')).timestamp())
                 clock = max(clock, latest_stamp + (120 if bootstrap else 0))
             actors = dict(source.execute('SELECT id,name FROM actors'))
-            conversations = {r['id']: r for r in source.execute('SELECT id,name,kind FROM conversations')}
+            columns = {row[1] for row in source.execute('PRAGMA table_info(conversations)')}
+            selector = 'id,name,kind,payload' if 'payload' in columns else 'id,name,kind'
+            conversations = {r['id']: r for r in source.execute(f'SELECT {selector} FROM conversations')}
             affected = set()
             for row in source.execute('SELECT payload FROM messages ORDER BY rowid'):
                 item = json.loads(row[0])
@@ -105,9 +119,11 @@ class Cache:
                 cid = item['conversation_id']
                 if cid not in affected:
                     conv = conversations[cid]
-                    db.execute('''INSERT INTO sessions(id,name,kind) VALUES(?,?,?)
-                        ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind''',
-                               (cid, conv['name'] or cid, 'group' if conv['kind'] == 'group' else 'private'))
+                    db.execute('''INSERT INTO sessions(id,name,kind,native_id) VALUES(?,?,?,?)
+                        ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,
+                        native_id=COALESCE(excluded.native_id,sessions.native_id)''',
+                               (cid, conv['name'] or cid, 'group' if conv['kind'] == 'group' else 'private',
+                                native_peer(conv)))
                     affected.add(cid)
                 native = item['provenance']
                 result = db.execute('''INSERT OR IGNORE INTO messages
@@ -249,6 +265,21 @@ class QQSource:
         return result
 
 
+def image_error(error):
+    """Project a duck-typed controlled image error without importing that module.
+
+    The deployed service can run through a signed runpy launcher whose import
+    path is not prepared at module load, so this layer never imports
+    image_media itself.
+    """
+    status = getattr(error, 'status', None)
+    code = getattr(error, 'code', None)
+    if not isinstance(status, int) or not isinstance(code, str):
+        return None
+    return status, {'error': str(error), 'code': code,
+                    'retryable': bool(getattr(error, 'retryable', False))}
+
+
 def make_server(cache, config, images=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -277,13 +308,30 @@ def make_server(cache, config, images=None):
                 parts = path.path.strip('/').split('/')
                 if len(parts) in (7, 8) and parts[:3] == ['api', 'v1', 'sessions'] and parts[4] == 'messages' and parts[6] == 'images':
                     if images is None:
-                        return self.reply(404, {'error': 'Images unavailable'})
+                        return self.reply(503, {'error': 'Image support is not enabled',
+                                                'code': 'QQ_BRIDGE_UNAVAILABLE', 'retryable': True})
                     sid, mid = unquote(parts[3]), unquote(parts[5])
-                    index = int(parts[7]) if len(parts) == 8 else None
+                    try:
+                        index = int(parts[7]) if len(parts) == 8 else None
+                    except ValueError:
+                        return self.reply(400, {'error': 'Invalid image request',
+                                                'code': 'INVALID_IMAGE_REQUEST', 'retryable': False})
                     size = query.get('size', ['preview'])[0]
                     if size not in ('preview', 'original'):
-                        raise ValueError('Invalid image size')
-                    return self.reply(200, images.resolve(sid, mid, index, size))
+                        return self.reply(400, {'error': 'Invalid image request',
+                                                'code': 'INVALID_IMAGE_REQUEST', 'retryable': False})
+                    try:
+                        return self.reply(200, images.resolve(sid, mid, index, size))
+                    except (KeyError, FileNotFoundError):
+                        return self.reply(404, {'error': 'Image not available', 'code': 'IMAGE_NOT_FOUND',
+                                                'retryable': False})
+                    except Exception as error:
+                        failure = image_error(error)
+                        if failure is None:
+                            raise
+                        status, payload = failure
+                        return self.reply(status, payload,
+                                          {'Retry-After': '2'} if status == 429 else None)
                 if len(parts) == 5 and parts[:3] == ['api', 'v1', 'sessions'] and parts[4] == 'messages':
                     since, offset = int(query.get('since', ['0'])[0]), int(query.get('offset', ['0'])[0])
                     if since < 0 or offset < 0:
@@ -297,11 +345,13 @@ def make_server(cache, config, images=None):
             except Exception:
                 return self.reply(503, {'error': 'Image source unavailable'})
 
-        def reply(self, status, value):
+        def reply(self, status, value, headers=None):
             body = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'application/octet-stream' if isinstance(value, bytes) else 'application/json; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
+            for name, header in (headers or {}).items():
+                self.send_header(name, header)
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             try:

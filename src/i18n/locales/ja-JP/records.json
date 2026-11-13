@@ -144,6 +144,26 @@
     "unavailable": "画像を表示できません",
     "viewOriginal": "元の画像を表示",
     "loadingOriginal": "元の画像を読み込み中…",
-    "originalUnavailable": "元の画像を表示できません。プレビューは表示できます。"
+    "originalUnavailable": "元の画像を表示できません。プレビューは表示できます。",
+    "errors": {
+      "INVALID_IMAGE_REQUEST": "画像リクエストが不正です",
+      "UNAUTHORIZED": "画像を読み取る権限がありません",
+      "MESSAGE_NOT_FOUND": "元のメッセージが見つかりません",
+      "IMAGE_NOT_FOUND": "この画像添付は利用できません",
+      "QQ_IMAGE_UNAVAILABLE": "QQ からこの画像を取得できません",
+      "QQ_ACCOUNT_MISMATCH": "ログイン中の QQ アカウントがデータソースのアカウントと一致しません。正しいアカウントに切り替えてください。",
+      "QQ_DATA_SOURCE_MISMATCH": "QQ とコレクターが使うアカウントデータディレクトリが一致しません",
+      "IMAGE_REFERENCE_MISMATCH": "取り込んだ画像情報が QQ の現在の添付と一致しません",
+      "IMAGE_TOO_LARGE": "画像が 50 MiB の上限を超えています",
+      "UNSUPPORTED_IMAGE": "画像形式が未対応か、ファイルが破損しています",
+      "QQ_IMAGE_BUSY": "ローカルの QQ 画像ダウンロードが混み合っています。しばらくしてから再試行してください。",
+      "QQ_DOWNLOAD_FAILED": "QQ 画像のダウンロードに失敗しました。後で再試行してください。",
+      "IMAGE_INTEGRITY_FAILED": "ダウンロードした画像の整合性検証に失敗しました",
+      "QQ_BRIDGE_UNAVAILABLE": "画像ブリッジ入りの QQ が起動していません。キャッシュ済みの画像は表示できます。",
+      "QQ_OFFLINE": "QQ が未ログインまたはオフラインです。ログインして再試行してください。",
+      "QQ_BRIDGE_INCOMPATIBLE": "この QQ バージョンは画像ブリッジに対応していません",
+      "QQ_DOWNLOAD_TIMEOUT": "画像のダウンロードがタイムアウトしました。再試行してください。",
+      "IMAGE_SOURCE_UNAVAILABLE": "画像データソースを一時的に利用できません"
+    }
   }
 }

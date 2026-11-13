@@ -1,0 +1,83 @@
+# QQ 进程内图片桥接
+
+在用户已登录的 QQ 主进程内加载的最小 HTTP 桥接：只提供状态查询和原图获取，供 QQ 采集器在本地缓存未命中时补图。协议、错误码和验收要求见 [QQ 在线图片桥接接口设计](../IMAGE_BRIDGE_API.md)。
+
+> 状态：桥接模块与采集器在线补图已实现，并通过自动化测试；带桥接的日常客户端安装流程仍属实验方案。没有加载桥接的原版 QQ 照常供采集器读取本地消息和图片缓存，只是无法在线补图。
+
+## 文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `bootstrap.cjs` | 客户端入口：拦截 `wrapper.node` 取得 QQ 自己创建的 Session，启动桥接，再加载原启动器；失败不影响 QQ 启动 |
+| `image-bridge.cjs` | 回环 HTTP 服务、发现文件、健康状态、账号与数据目录核对、原生消息查询、下载完成监听、并发与超时 |
+| `test_image_bridge.test.mjs` | 合成 QQ 对象与临时目录的回归测试，不登录真实账号 |
+
+## 加载方式
+
+桥接不单独创建 QQ 实例，也不登录第二个账号。做法是在**可回退的 QQ 副本**中把入口改为 `bootstrap.cjs`，由它加载原启动器：
+
+1. 退出 QQ，制作独立副本并保留原版安装。
+2. 将本目录三个文件复制到副本的 `Contents/Resources/app/`（与 `application.asar` 同级）。
+3. 备份副本的 `package.json`，将其 `main` 指向 `bootstrap.cjs`。
+4. 启动副本并登录。桥接使用 QQ 自己创建的会话，界面、收发消息与原生一致。
+
+`bootstrap.cjs` 默认加载同目录 `application.asar/app_launcher/index.js`。副本路径不同时，可在同目录放 `chatlab-image-bridge.json`：
+
+```json
+{ "main": "application.asar/app_launcher/index.js" }
+```
+
+也可用环境变量 `CHATLAB_QQ_LAUNCHER` 指定原启动器；`CHATLAB_QQ_BRIDGE=0` 可只加载原客户端、不启动桥接，用于排查启动问题。
+
+macOS 上副本需要可启动的签名状态。实验副本使用自签名并保留原版；日常方案仍需单独确定签名、更新与回退流程，不能直接把实验副本当成正式安装。
+
+## 运行数据
+
+默认目录 `~/.local/share/chatlab-qq/`，可用 `CHATLAB_QQ_HOME` 覆盖，与采集器共用：
+
+| 路径 | 内容 |
+| --- | --- |
+| `runtime/image-bridge.json` | 发现文件：协议版本、`127.0.0.1` 随机端口、临时 token、PID、`instanceId`；原子写入，权限 `0600` |
+| `runtime/image-bridge.log` | 桥接自身诊断日志，超过 1 MiB 轮转，不记录图片内容或凭证 |
+| `runtime/image-downloads/` | 下载临时目录；随机文件名，完成或失败后清理，启动时清理遗留的自身文件 |
+| `runtime/image-bridge-launcher.log` | 入口加载与启动失败的诊断日志 |
+
+token 每次启动随机生成（32 字节），只写入发现文件和采集器请求头，不进入 URL、日志或 Git。
+
+采集器使用 `<home>/runtime/image-bridge.json` 发现服务，因此两边必须使用同一个 `CHATLAB_QQ_HOME`。数据根目录可用 `CHATLAB_QQ_DATA_ROOT` 指定；未指定时按平台查找 QQ 默认目录。
+
+## 核对状态
+
+```bash
+home="${CHATLAB_QQ_HOME:-$HOME/.local/share/chatlab-qq}"
+token=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["token"])' "$home/runtime/image-bridge.json")
+curl -sS -H "Authorization: Bearer $token" http://127.0.0.1:$(python3 -c 'import json,sys;from urllib.parse import urlsplit;print(urlsplit(json.load(open(sys.argv[1]))["baseUrl"]).port)' "$home/runtime/image-bridge.json")/v1/health
+```
+
+`ready=true` 表示已取得会话、QQ 在线、账号数据目录可核对且原生接口具备取图能力。`sessionCaptured=true` 单独为真不代表在线；发现文件存在也不代表服务可用，采集器始终先做健康检查。
+
+`GET /v1/health` 与 `POST /v1/images/fetch` 都要求 Bearer token；只绑定回环地址，不开放 CORS 或任意路径、URL、表达式、IPC 方法。请求体上限 16 KiB，单张图片上限 50 MiB，最多同时 2 个原生下载，单次下载 50 秒，超出并发返回 `429` 与 `Retry-After: 2`。
+
+## 已知限制
+
+- 首版只取原图；预览未命中时会先下载整张原图再缩放，不提供原生小缩略图。
+- QQ 原生下载能否可靠取消尚未验证。超时或客户端断开后，未能确认结束的任务仍占用 2 个实际下载额度，直到完成事件到达或 QQ 退出。
+- 只支持已导入普通消息中的图片附件；不提供聊天导入、批量历史归档、视频/文件下载或发消息。
+- 客户端更新可能覆盖入口文件并使原生接口失效。更新后应重新核对入口、`/v1/health` 的 `qqVersion`、`capabilities` 与一张实测图片；不兼容时采集器返回 `QQ_BRIDGE_INCOMPATIBLE`，不循环重试。
+- 私聊链路与群聊需分别做真实账号验收；当前自动化测试使用合成会话，不替代私聊实机验证。
+
+## 回退
+
+1. 退出带桥接的 QQ。
+2. 恢复副本 `package.json` 的 `main`，或直接删除副本、继续使用原版安装。
+3. 确认同一时间只运行一个 QQ，再重新启动原版并核对账号与会话列表。
+
+发现文件只由所属 `instanceId` 的实例在退出时删除；崩溃遗留文件由采集器的健康检查识别为不可用，不会仅凭 PID 判定可用。
+
+## 测试
+
+```bash
+node --test integrations/qq/client-bridge/test_image_bridge.test.mjs
+```
+
+覆盖鉴权、请求形状、发现与健康状态、下载校验、并发合并、并发上限、超时后额度占用、登出和发现文件清理。

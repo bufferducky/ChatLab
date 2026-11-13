@@ -4,7 +4,8 @@ import path from 'node:path'
 import sharp from 'sharp'
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024
-export const DEFAULT_IMAGE_CACHE_BYTES = 3 * 1024 ** 3
+const MAX_SOURCE_ERROR_BYTES = 8 * 1024
+export const DEFAULT_IMAGE_CACHE_BYTES = 5 * 1024 ** 3
 const IMAGE_FORMATS: Record<string, string> = {
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -13,12 +14,63 @@ const IMAGE_FORMATS: Record<string, string> = {
   avif: 'image/avif',
 }
 
+/** Business codes the image endpoints may return. Unknown source codes are never forwarded. */
+export const MESSAGE_IMAGE_ERROR_CODES = [
+  'INVALID_IMAGE_REQUEST',
+  'UNAUTHORIZED',
+  'MESSAGE_NOT_FOUND',
+  'IMAGE_NOT_FOUND',
+  'QQ_IMAGE_UNAVAILABLE',
+  'QQ_ACCOUNT_MISMATCH',
+  'QQ_DATA_SOURCE_MISMATCH',
+  'IMAGE_REFERENCE_MISMATCH',
+  'IMAGE_TOO_LARGE',
+  'UNSUPPORTED_IMAGE',
+  'QQ_IMAGE_BUSY',
+  'QQ_DOWNLOAD_FAILED',
+  'IMAGE_INTEGRITY_FAILED',
+  'QQ_BRIDGE_UNAVAILABLE',
+  'QQ_OFFLINE',
+  'QQ_BRIDGE_INCOMPATIBLE',
+  'QQ_DOWNLOAD_TIMEOUT',
+  'IMAGE_SOURCE_UNAVAILABLE',
+] as const
+export type MessageImageErrorCode = (typeof MESSAGE_IMAGE_ERROR_CODES)[number]
+const KNOWN_CODES = new Set<string>(MESSAGE_IMAGE_ERROR_CODES)
+// A retry may succeed after the user logs in, waits or restarts the collector.
+const RETRYABLE_CODES = new Set<string>([
+  'QQ_IMAGE_BUSY',
+  'QQ_DOWNLOAD_FAILED',
+  'IMAGE_INTEGRITY_FAILED',
+  'QQ_BRIDGE_UNAVAILABLE',
+  'QQ_OFFLINE',
+  'QQ_DOWNLOAD_TIMEOUT',
+  'IMAGE_SOURCE_UNAVAILABLE',
+])
+const DEFAULT_CODE_BY_STATUS: Record<number, MessageImageErrorCode> = {
+  400: 'INVALID_IMAGE_REQUEST',
+  401: 'UNAUTHORIZED',
+  404: 'IMAGE_NOT_FOUND',
+  409: 'IMAGE_REFERENCE_MISMATCH',
+  413: 'IMAGE_TOO_LARGE',
+  415: 'UNSUPPORTED_IMAGE',
+  429: 'QQ_IMAGE_BUSY',
+  502: 'QQ_DOWNLOAD_FAILED',
+  503: 'QQ_BRIDGE_UNAVAILABLE',
+  504: 'QQ_DOWNLOAD_TIMEOUT',
+}
+
 export class MessageImageError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    message: string
-  ) {
+  readonly statusCode: number
+  readonly code: MessageImageErrorCode
+  readonly retryable: boolean
+
+  constructor(statusCode: number, message: string, code?: MessageImageErrorCode, retryable?: boolean) {
     super(message)
+    this.name = 'MessageImageError'
+    this.statusCode = statusCode
+    this.code = code ?? DEFAULT_CODE_BY_STATUS[statusCode] ?? 'IMAGE_SOURCE_UNAVAILABLE'
+    this.retryable = retryable ?? RETRYABLE_CODES.has(this.code)
   }
 }
 
@@ -30,6 +82,29 @@ export interface ImageManifest {
 export interface ImageBytes {
   data: Buffer
   mime: string
+}
+
+/** Both on-demand downloads and collector prefetches use the same image validation. */
+export async function prepareMessageImage(data: Buffer, size: 'preview' | 'original'): Promise<ImageBytes> {
+  if (data.length > MAX_IMAGE_BYTES) throw new MessageImageError(413, 'Image too large')
+  try {
+    const decoder = sharp(data, { limitInputPixels: 40_000_000 })
+    const metadata = await decoder.metadata()
+    const mime = IMAGE_FORMATS[metadata.format ?? '']
+    if (!mime) throw new Error('Unsupported image')
+    return size === 'preview'
+      ? {
+          data: await decoder
+            .rotate()
+            .resize(640, 640, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 75 })
+            .toBuffer(),
+          mime: 'image/webp',
+        }
+      : { data, mime }
+  } catch {
+    throw new MessageImageError(415, 'Unsupported or damaged image', 'UNSUPPORTED_IMAGE')
+  }
 }
 
 /** Content-addressed, disposable image cache. Missing blobs simply refetch. */
@@ -140,7 +215,7 @@ export class MessageImagesService {
   private resolve(sessionId: string, messageId: number) {
     const message = this.options.resolveMessage(sessionId, messageId)
     if (!message?.platformMessageId || !['qq', 'telegram'].includes(message.platform))
-      throw new MessageImageError(404, 'Image source unavailable')
+      throw new MessageImageError(404, 'Image source unavailable', 'MESSAGE_NOT_FOUND')
     const matches: Array<{ source: ImageSource; remote: string }> = []
     for (const candidate of this.options.loadSources()) {
       const source = candidate as ImageSource
@@ -156,7 +231,7 @@ export class MessageImagesService {
           matches.push({ source, remote: session.remoteSessionId })
       }
     }
-    if (matches.length !== 1) throw new MessageImageError(404, 'Image source unavailable')
+    if (matches.length !== 1) throw new MessageImageError(404, 'Image source unavailable', 'MESSAGE_NOT_FOUND')
     const { source, remote } = matches[0]
     const base = source.baseUrl.replace(/\/+$/, '')
     const url = `${base}/sessions/${encodeURIComponent(remote)}/messages/${encodeURIComponent(message.platformMessageId)}/images`
@@ -175,10 +250,42 @@ export class MessageImagesService {
       throw new MessageImageError(503, 'Image source unavailable')
     }
     if (!response.ok) {
-      await response.body?.cancel()
-      throw new MessageImageError(response.status === 404 ? 404 : 503, 'Image unavailable')
+      const detail = await this.sourceError(response)
+      const status = response.status >= 400 && response.status <= 599 ? response.status : 502
+      const code: MessageImageErrorCode =
+        detail.code && KNOWN_CODES.has(detail.code)
+          ? (detail.code as MessageImageErrorCode)
+          : (DEFAULT_CODE_BY_STATUS[status] ?? 'IMAGE_SOURCE_UNAVAILABLE')
+      throw new MessageImageError(status, detail.message ?? 'Image unavailable', code, detail.retryable)
     }
     return response
+  }
+
+  /** Read the collector's controlled error payload without trusting arbitrary fields. */
+  private async sourceError(response: Response): Promise<{ code?: string; message?: string; retryable?: boolean }> {
+    try {
+      const raw = await this.readLimited(response, MAX_SOURCE_ERROR_BYTES)
+      const payload = JSON.parse(raw.toString('utf8')) as {
+        code?: unknown
+        error?: unknown
+        message?: unknown
+        retryable?: unknown
+      }
+      const message =
+        typeof payload.message === 'string'
+          ? payload.message
+          : typeof payload.error === 'string'
+            ? payload.error
+            : undefined
+      return {
+        code: typeof payload.code === 'string' ? payload.code : undefined,
+        message: message ? message.slice(0, 200) : undefined,
+        retryable: typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+      }
+    } catch (error) {
+      if (error instanceof MessageImageError) return {}
+      return {}
+    }
   }
 
   async manifest(sessionId: string, messageId: number): Promise<ImageManifest> {
@@ -191,14 +298,14 @@ export class MessageImagesService {
     try {
       data = JSON.parse((await this.readLimited(response, 256 * 1024)).toString('utf8'))
     } catch {
-      throw new MessageImageError(502, 'Invalid image manifest')
+      throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
     }
     if (
       !Array.isArray(data.images) ||
       data.images.length > 100 ||
       !data.images.every((image: { index: unknown }, index: number) => image?.index === index)
     )
-      throw new MessageImageError(502, 'Invalid image manifest')
+      throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
     const manifest = {
       images: data.images.map((image: { index: number }) => ({ index: image.index })),
       caption: typeof data.caption === 'string' ? data.caption : '',
@@ -227,26 +334,7 @@ export class MessageImagesService {
 
   private async download(url: string, token: string, size: 'preview' | 'original', platform: string, key: string) {
     const data = await this.readLimited(await this.request(url, token), MAX_IMAGE_BYTES)
-    let image: ImageBytes
-    try {
-      const decoder = sharp(data, { limitInputPixels: 40_000_000 })
-      const metadata = await decoder.metadata()
-      const mime = IMAGE_FORMATS[metadata.format ?? '']
-      if (!mime) throw new Error('Unsupported image')
-      image =
-        size === 'preview'
-          ? {
-              data: await decoder
-                .rotate()
-                .resize(640, 640, { fit: 'inside', withoutEnlargement: true })
-                .webp({ quality: 75 })
-                .toBuffer(),
-              mime: 'image/webp',
-            }
-          : { data, mime }
-    } catch {
-      throw new MessageImageError(415, 'Unsupported or damaged image')
-    }
+    const image = await prepareMessageImage(data, size)
     // QQ originals stay in QQ's own cache. Only their small previews are copied.
     if (size === 'preview' || platform !== 'qq') await this.options.cache.put(key, image)
     return image
@@ -255,7 +343,7 @@ export class MessageImagesService {
   private async readLimited(response: Response, limit: number) {
     const chunks: Buffer[] = []
     let bytes = 0
-    if (!response.body) throw new MessageImageError(502, 'Empty image response')
+    if (!response.body) throw new MessageImageError(502, 'Empty image response', 'IMAGE_INTEGRITY_FAILED')
     const reader = response.body.getReader()
     try {
       for (;;) {

@@ -60,6 +60,29 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(self.cache.cursor(self.sid), 1)
         self.assertEqual(self.cache.status()["messages"], 1)
 
+    def test_media_schema_upgrade_keeps_messages_and_failed_batch_cannot_orphan_media(
+        self,
+    ):
+        self.cache.ingest(self.sid, [payload(1)])
+        # A pre-prefetch archive has messages and checkpoints but no media table.
+        with self.cache.connect() as db:
+            db.execute("DROP TABLE image_metadata")
+        upgraded = Cache(self.cache.root)
+        self.assertEqual(upgraded.cursor(self.sid), 1)
+        self.assertEqual(upgraded.status()["messages"], 1)
+        with self.assertRaises(ValueError):
+            upgraded.ingest(
+                self.sid,
+                [payload(2), payload("invalid")],
+                images=[("2", b"synthetic-reference", "caption")],
+            )
+        with upgraded.connect() as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM image_metadata").fetchone()[0], 0
+            )
+        self.assertEqual(upgraded.cursor(self.sid), 1)
+        self.assertEqual(upgraded.status()["messages"], 1)
+
     def test_week_boundary_migration_keeps_existing_messages_and_checkpoint(self):
         self.cache.ingest(self.sid, [payload(42)])
         with self.cache.connect() as db:

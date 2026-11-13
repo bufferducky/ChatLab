@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readdir } from 'node:fs/promises'
+import { mkdtemp, rm, readdir, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -58,6 +58,10 @@ test('cache deduplicates bytes and evicts least recently viewed images at its li
   await cache.put('duplicate', { data: Buffer.from('aaaa'), mime: 'image/png' })
   assert.equal((await readdir(dir)).filter((name) => name.endsWith('.bin')).length, 1)
   await cache.put('b', { data: Buffer.from('bbbb'), mime: 'image/png' })
+  // Make the next access strictly newer even on filesystems with coarse timestamps.
+  for (const name of (await readdir(dir)).filter((name) => name.endsWith('.bin'))) {
+    await utimes(path.join(dir, name), new Date(0), new Date(0))
+  }
   await cache.get('a')
   await cache.put('c', { data: Buffer.from('cccc'), mime: 'image/png' })
   assert.equal(await cache.get('b'), null)
@@ -100,4 +104,49 @@ test('QQ originals are read through without making another original copy; invali
   const detached = new MessageImagesService({ ...options, loadSources: () => [] })
   await assert.rejects(detached.image('local', 1, 0, 'preview'), { statusCode: 404 })
   assert.equal(calls, 3)
+})
+
+test('controlled collector errors preserve their business code and retryability', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'chatlab-images-errors-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  let status = 409
+  let payload: Record<string, unknown> = {
+    error: 'QQ account differs from the data source account',
+    code: 'QQ_ACCOUNT_MISMATCH',
+    retryable: false,
+  }
+  const service = new MessageImagesService({
+    cache: new MessageImageCache(dir),
+    resolveMessage: () => ({ platform: 'qq', platformMessageId: 'qq:origin:item' }),
+    loadSources: () => [
+      {
+        id: 'qq',
+        baseUrl: 'http://127.0.0.1:5035/api/v1',
+        token: 'secret',
+        sessions: [{ targetSessionId: 'local', remoteSessionId: 'conversation_1' }],
+      },
+    ],
+    fetch: async () => new Response(JSON.stringify(payload), { status }),
+  })
+  await assert.rejects(service.image('local', 1, 0, 'preview'), (error: unknown) => {
+    const failure = error as { statusCode: number; code: string; retryable: boolean }
+    return failure.statusCode === 409 && failure.code === 'QQ_ACCOUNT_MISMATCH' && failure.retryable === false
+  })
+  status = 429
+  payload = { error: 'QQ image download is busy', code: 'QQ_IMAGE_BUSY', retryable: true }
+  await assert.rejects(service.image('local', 1, 0, 'preview'), (error: unknown) => {
+    const failure = error as { statusCode: number; code: string; retryable: boolean }
+    return failure.statusCode === 429 && failure.code === 'QQ_IMAGE_BUSY' && failure.retryable === true
+  })
+  // Unknown or mismatched source codes never leak through; the status maps to a known code.
+  status = 503
+  payload = { error: 'unexpected upstream detail', code: 'SOMETHING_NEW', retryable: true }
+  await assert.rejects(service.image('local', 1, 0, 'preview'), (error: unknown) => {
+    const failure = error as { statusCode: number; code: string; retryable: boolean; message: string }
+    return (
+      failure.statusCode === 503 &&
+      failure.code === 'QQ_BRIDGE_UNAVAILABLE' &&
+      failure.message === 'unexpected upstream detail'
+    )
+  })
 })

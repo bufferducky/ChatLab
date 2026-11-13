@@ -173,6 +173,12 @@ class Cache:
                     payload TEXT NOT NULL,UNIQUE(session_id,native_id));
                 CREATE INDEX IF NOT EXISTS session_seq ON messages(session_id,seq);
                 CREATE INDEX IF NOT EXISTS session_observed ON messages(session_id,observed,seq);
+                CREATE TABLE IF NOT EXISTS image_metadata(
+                    session_id TEXT NOT NULL,native_id INTEGER NOT NULL,
+                    media BLOB NOT NULL,caption TEXT NOT NULL,
+                    preview_done INTEGER NOT NULL DEFAULT 0,
+                    next_retry REAL NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY(session_id,native_id));
             """)
             if "history_since" not in {
                 row[1] for row in db.execute("PRAGMA table_info(sessions)")
@@ -228,7 +234,7 @@ class Cache:
                 raise KeyError(sid)
             return row[0]
 
-    def ingest(self, sid, payloads, *, now=None):
+    def ingest(self, sid, payloads, *, now=None, images=()):
         """Commit rows and the Telegram ID checkpoint in the same transaction."""
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone():
@@ -262,6 +268,13 @@ class Cache:
             db.execute(
                 "INSERT OR REPLACE INTO state VALUES('clock',?)", (str(observed),)
             )
+            for mid, media, caption in images:
+                db.execute(
+                    """INSERT INTO image_metadata(session_id,native_id,media,caption)
+                    VALUES(?,?,?,?) ON CONFLICT(session_id,native_id)
+                    DO UPDATE SET media=excluded.media,caption=excluded.caption""",
+                    (sid, int(mid), media, caption),
+                )
         return changed
 
     def finish_session(self, sid):
@@ -446,7 +459,8 @@ async def discover(root, config):
         await client.disconnect()
 
 
-async def refresh(root, config, cache, shared_client=None):
+async def refresh(root, config, cache, shared_client=None, image_service=None):
+    from image_media import image_metadata
     from telethon import utils
 
     selected = config.get("selectedPeers", [])
@@ -483,6 +497,7 @@ async def refresh(root, config, cache, shared_client=None):
             session_since = cache.history_since(sid)
             cursor = cache.cursor(sid)
             batch = []
+            media_batch = []
             async for message in client.iter_messages(
                 dialog.entity,
                 min_id=cursor,
@@ -504,13 +519,20 @@ async def refresh(root, config, cache, shared_client=None):
                         message, utils.get_display_name(sender) if sender else None
                     )
                 )
+                if metadata := image_metadata(message):
+                    media_batch.append((str(message.id), *metadata))
                 if len(batch) >= BATCH_SIZE:
-                    changed += cache.ingest(sid, batch)
+                    changed += cache.ingest(sid, batch, images=media_batch)
                     batch.clear()
+                    media_batch.clear()
+                    if image_service:
+                        image_service.wake_prefetch()
                     if changed % 10000 == 0:
                         print(json.dumps({"collectedMessages": changed}), flush=True)
             if batch:
-                changed += cache.ingest(sid, batch)
+                changed += cache.ingest(sid, batch, images=media_batch)
+                if image_service:
+                    image_service.wake_prefetch()
             cache.finish_session(sid)
         cache.finish()
         return {"changedMessages": changed, **cache.status()}
@@ -664,16 +686,18 @@ def main():
             return
 
         worker = None
-        if args.command == "serve":
+        if args.command in ("serve", "refresh"):
             from image_media import TelegramWorker
 
-            worker = TelegramWorker(lambda: make_client(root, config), cache)
+            worker = TelegramWorker(lambda: make_client(root, config), cache, config)
 
         def collect():
             started = time.monotonic()
             try:
                 result = (
-                    worker.run(refresh(root, config, cache, worker.client))
+                    worker.run(
+                        refresh(root, config, cache, worker.client, worker.images)
+                    )
                     if worker
                     else asyncio.run(refresh(root, config, cache))
                 )
@@ -696,7 +720,13 @@ def main():
                 return False
 
         if args.command == "refresh":
-            raise SystemExit(0 if collect() else 1)
+            try:
+                success = collect()
+                if success:
+                    worker.run(worker.images.prefetch_pending())
+                raise SystemExit(0 if success else 1)
+            finally:
+                worker.close()
         stop = threading.Event()
         server = make_server(cache, config, worker.images)
 

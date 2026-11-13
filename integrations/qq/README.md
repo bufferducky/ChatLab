@@ -8,6 +8,8 @@
                      → 比对全部原生消息 ID，只解析新记录 → 同一存档
 ```
 
+在线补图已实现：本地缓存未命中时，采集器发现并调用 QQ 进程内桥接下载原图，接口与错误码见 [QQ 在线图片桥接接口设计](IMAGE_BRIDGE_API.md)。桥接模块与采集器链路已通过自动化测试；带桥接的日常客户端部署仍属实验，见 [桥接部署说明](client-bridge/README.md)。不加载桥接的原版 QQ 仍可读取本地缓存。
+
 ## 本机运行
 
 - 使用已安装 `qq-local-interface` 的 Python 虚拟环境；下例假设读取器位于 `~/openProjects/qq-local-interface`。本机读取器包含尚未发布到上游的预分配零页兼容修复，具体条件见 [调研记录](RESEARCH.md#已授权的重签试验与本机兼容修复)，不能把原版读取器视为已经包含此修复。
@@ -44,6 +46,14 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.ch
 ```
 
 服务绑定 `127.0.0.1:5035`，Pull 接口需要 Bearer token。`/health` 只返回就绪状态、计数、刷新时间及错误类别。凭证、独立存档和统计报告保存在 `~/.local/share/chatlab-qq/`，不放进 Git。移动代码仓库或读取器后需要更新 LaunchAgent 路径。
+
+## 在线补图（实验）
+
+本地缓存未命中且桥接可用时，图片接口按原消息查询 QQ 附件并调用 `downloadRichMedia`，校验原图 MD5 后返回字节；ChatLab 继续生成预览并写入共用缓存。桥接不可用、QQ 离线或账号/数据目录不符时返回明确错误码，不静默降级成旧数据。
+
+- 桥接与 QQ 采集器共用 `~/.local/share/chatlab-qq/`，通过 `runtime/image-bridge.json` 发现回环地址和临时 token。
+- 桥接必须运行在用户已登录的同一个 QQ 会话内；预览未命中时会先下载整张原图。
+- 日常安装、签名与更新/回退方案尚未定稿；实验步骤、限制与回退方法见 [client-bridge/README.md](client-bridge/README.md)。
 
 ## 数据边界
 

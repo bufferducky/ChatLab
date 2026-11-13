@@ -69,6 +69,16 @@ export default defineConfigWithVueTs(
     },
   },
 
+  // QQ 客户端内桥接运行在 QQ 的 Electron 主进程，必须使用 CommonJS 与 require。
+  {
+    files: ['integrations/qq/client-bridge/**/*.cjs', 'integrations/qq/client-bridge/**/*.mjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-empty-function': 'off',
+      'no-loss-of-precision': 'off',
+    },
+  },
+
   // desktop 侧 better-sqlite3 必须显式携带 Electron-ABI nativeBinding，
   // 否则 dev 环境会加载 node_modules 的 Node ABI 绑定并触发 NODE_MODULE_VERSION 报错。
   // 新代码请优先走统一入口：worker 用 dbCore openRawDatabase()/openDatabase()，

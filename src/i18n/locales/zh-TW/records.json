@@ -144,6 +144,26 @@
     "unavailable": "圖片無法使用",
     "viewOriginal": "查看原圖",
     "loadingOriginal": "正在載入原圖…",
-    "originalUnavailable": "原圖無法使用，仍可查看預覽圖"
+    "originalUnavailable": "原圖無法使用，仍可查看預覽圖",
+    "errors": {
+      "INVALID_IMAGE_REQUEST": "圖片請求無效",
+      "UNAUTHORIZED": "未授權，無法讀取圖片",
+      "MESSAGE_NOT_FOUND": "找不到這則原訊息",
+      "IMAGE_NOT_FOUND": "此圖片附件無法使用",
+      "QQ_IMAGE_UNAVAILABLE": "QQ 無法取得這張圖片",
+      "QQ_ACCOUNT_MISMATCH": "目前登入的 QQ 帳號與資料來源帳號不一致，請切回正確帳號",
+      "QQ_DATA_SOURCE_MISMATCH": "QQ 與擷取器使用的帳號資料目錄不一致",
+      "IMAGE_REFERENCE_MISMATCH": "匯入的圖片資訊與 QQ 目前附件不一致",
+      "IMAGE_TOO_LARGE": "圖片超過 50 MiB 限制",
+      "UNSUPPORTED_IMAGE": "圖片格式不受支援或檔案已損毀",
+      "QQ_IMAGE_BUSY": "本機 QQ 圖片下載已滿，請稍後重試",
+      "QQ_DOWNLOAD_FAILED": "QQ 圖片下載失敗，可稍後重試",
+      "IMAGE_INTEGRITY_FAILED": "下載的圖片未通過完整性驗證",
+      "QQ_BRIDGE_UNAVAILABLE": "未執行帶取圖橋接的 QQ；既有快取仍可查看",
+      "QQ_OFFLINE": "QQ 未登入或已離線，請登入後重試",
+      "QQ_BRIDGE_INCOMPATIBLE": "目前 QQ 版本與取圖橋接不相容",
+      "QQ_DOWNLOAD_TIMEOUT": "圖片下載逾時，請重試",
+      "IMAGE_SOURCE_UNAVAILABLE": "圖片資料來源暫時無法使用"
+    }
   }
 }

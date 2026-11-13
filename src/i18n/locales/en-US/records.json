@@ -144,6 +144,26 @@
     "unavailable": "Image unavailable",
     "viewOriginal": "View original",
     "loadingOriginal": "Loading original…",
-    "originalUnavailable": "Original unavailable. The preview is still available."
+    "originalUnavailable": "Original unavailable. The preview is still available.",
+    "errors": {
+      "INVALID_IMAGE_REQUEST": "Invalid image request",
+      "UNAUTHORIZED": "Not authorized to read this image",
+      "MESSAGE_NOT_FOUND": "The original message was not found",
+      "IMAGE_NOT_FOUND": "This image attachment is unavailable",
+      "QQ_IMAGE_UNAVAILABLE": "QQ cannot provide this image",
+      "QQ_ACCOUNT_MISMATCH": "The logged-in QQ account differs from the data source account. Switch back to the correct account.",
+      "QQ_DATA_SOURCE_MISMATCH": "QQ and the collector use different account data directories",
+      "IMAGE_REFERENCE_MISMATCH": "Imported image metadata does not match QQ's attachment",
+      "IMAGE_TOO_LARGE": "Image exceeds the 50 MiB limit",
+      "UNSUPPORTED_IMAGE": "Unsupported or damaged image",
+      "QQ_IMAGE_BUSY": "Local QQ image downloads are busy. Try again shortly.",
+      "QQ_DOWNLOAD_FAILED": "QQ image download failed. Try again later.",
+      "IMAGE_INTEGRITY_FAILED": "The downloaded image failed integrity verification",
+      "QQ_BRIDGE_UNAVAILABLE": "QQ is not running with the image bridge. Cached images are still available.",
+      "QQ_OFFLINE": "QQ is not logged in or is offline. Log in and retry.",
+      "QQ_BRIDGE_INCOMPATIBLE": "This QQ version is not compatible with the image bridge",
+      "QQ_DOWNLOAD_TIMEOUT": "Image download timed out. Try again.",
+      "IMAGE_SOURCE_UNAVAILABLE": "Image source is temporarily unavailable"
+    }
   }
 }

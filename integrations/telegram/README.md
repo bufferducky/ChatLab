@@ -19,6 +19,9 @@ flowchart LR
 - ChatLab 拉取：**30 分钟**，独立于采集周期；两端错位时消息显示可能延迟接近 1 小时，另加采集与导入耗时。
 - API：仅绑定 `127.0.0.1:5036`，数据端点需要 Bearer token。`/health` 仅返回计数、时间和错误类别。
 - LaunchAgent：`~/Library/LaunchAgents/io.github.bufferducky.chatlab-telegram.plist`，登录后启动，启动参数不包含凭证。
+- 图片预取：采集普通图片消息时，将 Telegram 媒体对象、配文及待下载状态与消息断点一起写入 `messages.sqlite3` 的 `image_metadata` 表；后台单独下载预览，失败 30 分钟后重试，重启后续办，不回滚文字消息。文件引用过期时才重新查询原消息。下载仍遵守共享请求间隔和 Telegram 官方限流，因此预览可能晚于文字准备完成。
+- 图片存储：后台调用仓库内 `image-cache.mts`，复用已有 Node 图片校验、640px WebP 转换和 **5 GiB 共用缓存**，默认写入 `~/.chatlab/cache/message-images/`，采集器不建立另一份图片目录。原图仍按点击下载；旧消息仅按查看补充媒体信息，不主动全量回填历史图片。预览被容量淘汰后按查看重新获取。
+- 预取运行环境：除 Python 外需项目已有的 Node 24、tsx 和 sharp，无新增依赖。LaunchAgent 找不到正确 Node 时，在私有配置中设置 `nodeExecutable` 为 Node 24 的绝对路径。自定义 ChatLab 数据目录时设置 `imageCacheDir` 为同一数据目录的 `cache/message-images/`；数据源地址与默认 `http://127.0.0.1:<port>/api/v1` 不同时，设置 `imageBaseUrl` 为已注册的数据源地址，使预取与阅读使用相同缓存键。预取不要求 ChatLab 桌面端保持运行。
 
 本机 Python 3.12 环境位于上述目录的 `.venv/`。在另一台机器部署时，从仓库根目录安装采集依赖：
 
@@ -88,7 +91,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.ch
 - 已提交的记录可供 Pull 导入；`ready` 表示存档可读。`historyComplete` 表示会话在配置时间范围内完成首次采集，不表示完整账号历史。官方限流等待后在本轮继续，不丢弃当前尚未提交的批次；断网、授权等错误仍记录类别并结束本轮，不删除已采集数据，下次从已提交断点继续。
 - Pull 使用本地观察时间与 `seq` 键集分页，不把旧消息原始发送时间当采集游标。因此历史补齐和同一秒多条消息都可续拉。返回的水位不会超过已提交观察时间。
 - 首版只追加新增消息。已采集消息的编辑、撤回、删除不镜像，群改名和历史成员姓名也不承诺覆盖已有 ChatLab 消息。
-- 保留正文、发送者、日期、平台消息及同会话回复 ID。普通图片现支持查看时下载预览图、点击时下载原图，缓存上限默认 3 GiB，详见 [图片说明](../IMAGE_MEDIA.md)；采集过程不批量下载图片。其他媒体仍保留类型及说明。跨会话回复不错误关联到本会话。
+- 保留正文、发送者、日期、平台消息及同会话回复 ID。新采集普通图片会后台预取预览，点击时下载原图，缓存上限默认 5 GiB，详见 [图片说明](../IMAGE_MEDIA.md)。其他媒体仍保留类型及说明。跨会话回复不错误关联到本会话。
 - Secret Chat、已删除或账号不可见的历史不在此链路范围；旧群迁移形成的独立历史不自动合并到新群。存档随新增消息增长。
 - 本桥接拥有独立的 ChatLab source/session 映射。若此前已通过官方 JSON 导入同一个聊天，需要另行明确复用目标，避免两份会话；脚本不会按群名自动合并。
 - 若迁移机器或更改端口，必须保留配置、授权、消息存档和 ChatLab 数据源配置，并明确处理 base URL 对目标 ID 的影响；不能仅重新注册一个 URL 后假定会追加到旧会话。
@@ -104,6 +107,7 @@ pnpm exec prettier --check integrations/telegram/connect.mts integrations/telegr
 pnpm run type-check:node
 # Node 24 + Python 3，临时库集成验证，不访问真实 Telegram。
 node scripts/run-tests.mjs integrations/telegram/bridge.smoke.test.mts
+node scripts/run-tests.mjs integrations/telegram/image-cache.test.mts
 ```
 
 单元测试验证事务回滚、重启续传、跨会话 ID 隔离、同秒与历史分页、文字和回复转换、媒体说明及 HTTP 鉴权；还验证跨会话请求限速、Telethon 原请求等待后重试、批次遇到限流后完整续采及停止等待后保留截止时间。真实导入通过现有导入器完成，审计逐条比较消息 ID、正文、时间、类型、发送者和回复目标，仅输出统计。
