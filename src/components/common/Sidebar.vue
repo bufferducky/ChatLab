@@ -62,7 +62,7 @@ const { toggleSidebar } = layoutStore
 const router = useRouter()
 const route = useRoute()
 const { controller: navigationLayoutController, snapshot: navigationLayoutSnapshot } = useNavigationLayout()
-const sessionRowSize = computed(() => (isCollapsed.value ? 44 : 52))
+const SESSION_ROW_SIZE = 60
 const SESSION_LIST_BOTTOM_PADDING = 32
 
 // 是否在首页
@@ -161,7 +161,7 @@ const sessionVirtualizer = useVirtualizer(
   computed(() => ({
     count: filteredSortedSessions.value.length,
     getScrollElement: () => sessionListRef.value,
-    estimateSize: () => sessionRowSize.value,
+    estimateSize: () => SESSION_ROW_SIZE,
     overscan: 8,
     getItemKey: (index: number) => filteredSortedSessions.value[index]?.id ?? index,
   }))
@@ -494,45 +494,22 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
 
 <template>
   <div
-    class="flex h-full shrink-0 flex-col overflow-hidden rounded-lg bg-white transition-all duration-300 ease-in-out dark:bg-sidebar-dark"
-    :class="isCollapsed ? 'w-14' : 'w-72'"
+    class="flex h-full shrink-0 overflow-hidden border-r border-chat-divider bg-session-bg dark:border-white/5 dark:bg-sidebar-dark"
+    :class="isCollapsed ? 'w-16' : 'w-[328px]'"
   >
-    <div class="flex flex-col px-2 pb-4" :class="hasMacTitlebarInset ? 'pt-8' : 'pt-5'">
-      <!-- Header -->
-      <div
-        class="mb-2 flex items-center"
-        :class="[isCollapsed ? 'justify-center' : 'justify-between']"
-        style="-webkit-app-region: drag"
+    <nav
+      class="flex w-16 shrink-0 flex-col items-center border-r border-chat-divider py-3 dark:border-white/5"
+      :class="hasMacTitlebarInset ? 'pt-10' : ''"
+      :aria-label="t('layout.brand')"
+    >
+      <SidebarCollapseButton
+        :collapsed="isCollapsed"
+        :accessible-label="t(isCollapsed ? 'common.expandSidebar' : 'common.collapseSidebar')"
+        @click="toggleSidebar"
       >
-        <div v-if="!isCollapsed" class="ml-2 flex items-center">
-          <img :src="logoSvg" alt="ChatLab" class="h-6 w-6 select-none pointer-events-none" />
-          <div class="ml-2 flex items-baseline gap-2">
-            <div class="text-xl font-black tracking-tight text-pink-500">
-              {{ t('layout.brand') }}
-            </div>
-            <span class="text-xs text-gray-400">v{{ version }}</span>
-          </div>
-          <button
-            v-if="hasUpdate"
-            type="button"
-            class="ml-1.5 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm shadow-red-500/20 transition hover:bg-red-600"
-            style="-webkit-app-region: no-drag"
-            @click="openUpdateModal"
-          >
-            {{ t('layout.updateNotice.tag') }}
-          </button>
-        </div>
-        <SidebarCollapseButton
-          :collapsed="isCollapsed"
-          :accessible-label="t(isCollapsed ? 'common.expandSidebar' : 'common.collapseSidebar')"
-          @click="toggleSidebar"
-        >
-          <img :src="logoSvg" alt="ChatLab" class="size-5 select-none pointer-events-none group-hover:hidden" />
-          <UIcon name="i-lucide-panel-right-open" class="size-4 hidden scale-x-[-1] group-hover:block" />
-        </SidebarCollapseButton>
-      </div>
-
-      <div class="space-y-1">
+        <img :src="logoSvg" alt="ChatLab" class="size-6 select-none pointer-events-none" />
+      </SidebarCollapseButton>
+      <div class="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto px-2">
         <!-- 新建分析 -->
         <SidebarButton
           icon="i-heroicons-plus"
@@ -581,10 +558,23 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
           @click="openContacts"
         />
       </div>
-    </div>
+      <SidebarFooter v-if="props.backendFeatures || props.settingsEnabled" />
+    </nav>
 
     <!-- Session List -->
-    <div class="flex-1 relative min-h-0 flex flex-col">
+    <div v-show="!isCollapsed" class="relative flex min-h-0 w-[264px] shrink-0 flex-col">
+      <div
+        class="flex h-14 shrink-0 items-center gap-2 px-4"
+        :class="hasMacTitlebarInset ? 'mt-3' : ''"
+        style="-webkit-app-region: drag"
+      >
+        <img :src="logoSvg" alt="" class="size-5" />
+        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('layout.brand') }}</span>
+        <span class="text-[10px] text-gray-500">v{{ version }}</span>
+        <UButton v-if="hasUpdate" size="xs" variant="soft" class="ml-auto app-region-no-drag" @click="openUpdateModal">
+          {{ t('layout.updateNotice.tag') }}
+        </UButton>
+      </div>
       <!-- 筛选与排序 - 固定在顶部，不随列表滚动 -->
       <div v-if="!isCollapsed && sessions.length > 0" class="mb-2">
         <CompactTabs v-model="filterType" :items="filterTabItems" size="sm" :bordered="false">
@@ -614,10 +604,10 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
             </div>
           </template>
         </CompactTabs>
-        <div class="mt-2 flex flex-wrap gap-1 px-4" :aria-label="t('layout.sources.filter')" role="group">
+        <div class="mt-2 flex gap-1 overflow-x-auto px-4 pb-0.5" :aria-label="t('layout.sources.filter')" role="group">
           <button
             type="button"
-            class="min-h-7 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            class="min-h-7 shrink-0 whitespace-nowrap rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
             :class="
               platformFilter === 'all'
                 ? 'border-gray-500 bg-gray-50 text-gray-900 dark:border-gray-400 dark:bg-white/5 dark:text-white'
@@ -633,7 +623,7 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
             v-for="platform in platformFilters"
             :key="platform.key"
             type="button"
-            class="inline-flex min-h-7 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            class="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
             :class="
               platformFilter === platform.key
                 ? ['border-current', platform.badgeClass]
@@ -652,6 +642,10 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
         <div v-if="showSearch" class="mt-2 px-4">
           <UInput
             v-model="searchQuery"
+            class="w-full"
+            :ui="{
+              base: 'bg-chat-control ring-0 dark:bg-chat-bubble-dark focus-visible:ring-2 focus-visible:ring-primary-500',
+            }"
             :placeholder="t('layout.searchPlaceholder')"
             :aria-label="t('layout.searchPlaceholder')"
             icon="i-heroicons-magnifying-glass"
@@ -736,11 +730,9 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                   class="group relative flex items-center text-left transition-all duration-200 cursor-pointer"
                   :class="[
                     route.params.id === virtualSessionAt(virtualItem.index).id
-                      ? 'text-primary-600 font-medium dark:text-primary-400'
-                      : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200/20 dark:hover:bg-white/[0.04]',
-                    isCollapsed
-                      ? 'justify-center h-10 w-10 rounded-lg mx-auto'
-                      : 'h-12 w-full rounded-xl p-1.5 px-2.5 pl-1.5',
+                      ? 'bg-session-selected text-chat-text dark:bg-session-selected-dark dark:text-gray-100'
+                      : 'text-chat-text dark:text-gray-200 hover:bg-chat-control dark:hover:bg-white/[0.04]',
+                    isCollapsed ? 'justify-center h-10 w-10 rounded-lg mx-auto' : 'h-14 w-full rounded-lg px-2',
                   ]"
                   role="button"
                   tabindex="0"
@@ -750,25 +742,15 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                   @keydown.space.prevent="openSession(virtualSessionAt(virtualItem.index))"
                   @click="openSession(virtualSessionAt(virtualItem.index))"
                 >
-                  <!-- 激活指示器：在展开和折叠下，都优雅地贴在侧边栏最左侧边缘 -->
-                  <div
-                    class="absolute -left-2 top-1/2 w-[3px] -translate-y-1/2 rounded-r-full bg-primary-500 transition-all duration-200"
-                    :class="[
-                      route.params.id === virtualSessionAt(virtualItem.index).id
-                        ? 'h-4.5 opacity-100'
-                        : 'h-0 opacity-0 group-hover:h-2.5 group-hover:opacity-40',
-                    ]"
-                  />
-
                   <!-- 会话头像 -->
                   <LazyAvatar
                     :src="getSessionAvatar(virtualSessionAt(virtualItem.index))"
                     :alt="virtualSessionAt(virtualItem.index).name"
                     :text="getSessionAvatarText(virtualSessionAt(virtualItem.index))"
-                    :root-class="['h-7 w-7 min-w-7 shrink-0', isCollapsed ? '' : 'mr-2.5']"
-                    image-class="h-7 w-7 rounded-lg object-cover"
+                    :root-class="['h-9 w-9 min-w-9 shrink-0', isCollapsed ? '' : 'mr-2.5']"
+                    image-class="h-9 w-9 rounded-full object-cover"
                     :fallback-class="[
-                      'flex h-7 w-7 items-center justify-center rounded-lg text-xs font-semibold select-none',
+                      'flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold select-none',
                       getAvatarColorClass(
                         virtualSessionAt(virtualItem.index),
                         route.params.id === virtualSessionAt(virtualItem.index).id
@@ -785,7 +767,7 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                   <!-- Session Info -->
                   <div v-if="!isCollapsed" class="min-w-0 flex-1">
                     <div class="flex items-center justify-between gap-1.5">
-                      <p class="truncate text-xs font-medium">
+                      <p class="truncate text-[13px] font-medium">
                         {{ virtualSessionAt(virtualItem.index).name }}
                       </p>
                       <UIcon
@@ -796,7 +778,7 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                     </div>
                     <div class="mt-1 flex min-w-0 items-center gap-1.5">
                       <PlatformBadge :platform="virtualSessionAt(virtualItem.index).platform" />
-                      <span class="truncate text-[10px] leading-none text-gray-500 dark:text-gray-400">
+                      <span class="truncate text-[11px] leading-none text-chat-muted dark:text-gray-400">
                         {{ t('layout.sessionInfo', { count: virtualSessionAt(virtualItem.index).messageCount }) }}
                       </span>
                     </div>
@@ -807,10 +789,6 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
           </div>
         </div>
       </div>
-      <!-- 底部渐变蒙层 - 让列表消失更自然（固定在外层容器底部） -->
-      <div
-        class="pointer-events-none absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white to-transparent dark:from-[#202024]"
-      />
     </div>
 
     <!-- Rename Modal -->
@@ -886,9 +864,6 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
         </div>
       </template>
     </UModal>
-
-    <!-- Footer -->
-    <SidebarFooter v-if="props.backendFeatures || props.settingsEnabled" />
   </div>
 </template>
 

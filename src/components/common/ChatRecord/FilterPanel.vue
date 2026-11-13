@@ -3,7 +3,7 @@
  * 聊天记录筛选面板
  * 支持消息ID、成员、时间范围、关键词的组合筛选
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 import { DatePicker } from '@/components/UI'
@@ -25,6 +25,20 @@ const emit = defineEmits<{
   /** 重置筛选 */
   (e: 'reset'): void
 }>()
+
+const advancedOpen = ref(false)
+const appliedConditions = computed(() => {
+  const query = props.query
+  const conditions: string[] = []
+  if (query.scrollToMessageId) conditions.push(`${t('records.filter.messageId')}: ${query.scrollToMessageId}`)
+  if (query.memberId != null)
+    conditions.push(`${t('records.filter.memberPlaceholder')}: ${query.memberName || query.memberId}`)
+  if (query.keywords?.length) conditions.push(query.keywords.join(', '))
+  if (query.startTs)
+    conditions.push(`${t('records.filter.startDate')}: ${dayjs.unix(query.startTs).format('YYYY-MM-DD')}`)
+  if (query.endTs) conditions.push(`${t('records.filter.endDate')}: ${dayjs.unix(query.endTs).format('YYYY-MM-DD')}`)
+  return conditions
+})
 
 // 本地表单数据
 const formData = ref<FilterFormData>({
@@ -99,6 +113,7 @@ function applyFilter() {
   }
 
   emit('apply', query)
+  advancedOpen.value = false
 }
 
 // 回车搜索
@@ -124,44 +139,122 @@ function resetFilter() {
 </script>
 
 <template>
-  <div class="shrink-0 border-b border-gray-200 px-4 py-2.5 dark:border-gray-800">
-    <div class="flex flex-wrap items-center gap-2">
-      <UInput
-        v-model="formData.messageId"
-        type="number"
-        :placeholder="t('records.filter.messageId')"
-        size="sm"
-        class="w-20 shrink-0"
-      />
-      <MemberSearchSelect
-        v-model="formData.memberId"
-        v-model:member-name="formData.memberName"
-        :session-id="sessionId"
-        :placeholder="t('records.filter.memberPlaceholder')"
-        width-class="w-28"
-        @select="applyFilter"
-        @clear="applyFilter"
-      />
-      <div class="flex shrink-0 items-center gap-1.5">
-        <DatePicker v-model="formData.startDate" :placeholder="t('records.filter.startDate')" width-class="w-28" />
-        <span class="text-xs text-gray-400">~</span>
-        <DatePicker v-model="formData.endDate" :placeholder="t('records.filter.endDate')" width-class="w-28" />
-      </div>
+  <div class="shrink-0 border-b border-chat-divider bg-session-bg px-4 py-2 dark:border-white/5 dark:bg-chat-dark">
+    <div class="flex min-w-0 items-center gap-2">
       <UInput
         v-model="formData.keywords"
+        :ui="{
+          base: 'bg-chat-control ring-0 dark:bg-chat-bubble-dark focus-visible:ring-2 focus-visible:ring-primary-500',
+        }"
+        icon="i-heroicons-magnifying-glass"
         :placeholder="t('records.filter.keywordsPlaceholder')"
+        :aria-label="t('records.filter.keywordsPlaceholder')"
         size="sm"
-        class="min-w-24 max-w-[260px] flex-1"
+        class="min-w-0 flex-1"
         @keydown="handleKeywordsKeydown"
       />
-      <div class="ml-auto flex shrink-0 gap-1">
-        <UButton color="neutral" variant="ghost" size="sm" @click="resetFilter">
-          {{ t('records.filter.reset') }}
-        </UButton>
-        <UButton color="primary" size="sm" @click="applyFilter">
+      <UButton
+        icon="i-heroicons-magnifying-glass"
+        color="neutral"
+        variant="ghost"
+        size="sm"
+        :aria-label="t('layout.tooltip.search')"
+        @click="applyFilter"
+      />
+      <UPopover
+        v-model:open="advancedOpen"
+        :content="{ align: 'end' }"
+        :ui="{ content: 'z-50 w-80 max-w-[calc(100vw-2rem)] p-4' }"
+      >
+        <UButton
+          icon="i-lucide-sliders-horizontal"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          :aria-label="t('records.filter.filter')"
+        >
           {{ t('records.filter.filter') }}
+          <span
+            v-if="appliedConditions.length"
+            class="flex size-4 items-center justify-center rounded-full bg-primary-100 text-[10px] text-primary-700 dark:bg-primary-900 dark:text-primary-200"
+          >
+            {{ appliedConditions.length }}
+          </span>
         </UButton>
-      </div>
+        <template #content>
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-medium">{{ t('records.filter.filter') }}</h2>
+            <UButton
+              icon="i-lucide-x"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              :aria-label="t('common.close')"
+              @click="advancedOpen = false"
+            />
+          </div>
+          <div class="space-y-3">
+            <label class="block space-y-1 text-xs text-gray-600 dark:text-gray-300">
+              <span>{{ t('records.filter.messageId') }}</span>
+              <UInput
+                v-model="formData.messageId"
+                type="number"
+                :placeholder="t('records.filter.messageId')"
+                class="w-full"
+                size="sm"
+                @keydown.enter="applyFilter"
+              />
+            </label>
+            <label class="block space-y-1 text-xs text-gray-600 dark:text-gray-300">
+              <span>{{ t('records.filter.memberPlaceholder') }}</span>
+              <MemberSearchSelect
+                v-model="formData.memberId"
+                v-model:member-name="formData.memberName"
+                :session-id="sessionId"
+                :placeholder="t('records.filter.memberPlaceholder')"
+                width-class="w-full"
+                @select="applyFilter"
+                @clear="applyFilter"
+              />
+            </label>
+            <div class="flex items-center gap-2">
+              <div class="min-w-0 flex-1 space-y-1">
+                <p class="text-xs text-gray-600 dark:text-gray-300">{{ t('records.filter.startDate') }}</p>
+                <DatePicker
+                  v-model="formData.startDate"
+                  :placeholder="t('records.filter.startDate')"
+                  width-class="w-full"
+                />
+              </div>
+              <div class="min-w-0 flex-1 space-y-1">
+                <p class="text-xs text-gray-600 dark:text-gray-300">{{ t('records.filter.endDate') }}</p>
+                <DatePicker
+                  v-model="formData.endDate"
+                  :placeholder="t('records.filter.endDate')"
+                  width-class="w-full"
+                />
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end gap-2">
+            <UButton color="neutral" variant="ghost" size="sm" @click="resetFilter">
+              {{ t('records.filter.reset') }}
+            </UButton>
+            <UButton size="sm" @click="applyFilter">{{ t('records.filter.filter') }}</UButton>
+          </div>
+        </template>
+      </UPopover>
+    </div>
+    <div v-if="appliedConditions.length" class="mt-2 flex flex-wrap items-center gap-1.5" aria-live="polite">
+      <span
+        v-for="condition in appliedConditions"
+        :key="condition"
+        class="max-w-full truncate rounded bg-primary-50 px-2 py-0.5 text-[11px] text-primary-700 dark:bg-primary-950 dark:text-primary-200"
+        :title="condition"
+      >
+        {{ condition }}
+      </span>
+      <UButton color="neutral" variant="link" size="xs" @click="resetFilter">{{ t('records.filter.reset') }}</UButton>
     </div>
   </div>
 </template>

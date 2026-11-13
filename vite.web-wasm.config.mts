@@ -16,7 +16,7 @@ export default defineConfig({
       dts: false,
       ui: {
         colors: {
-          primary: 'pink',
+          primary: 'blue',
           neutral: 'zinc',
         },
       },

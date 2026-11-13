@@ -8,7 +8,7 @@ import { formatDateTime } from '@/utils/dateFormat'
 import PlatformBadge from '@/components/common/PlatformBadge.vue'
 import { getSessionSources } from './session-source'
 
-const props = defineProps<{ session: AnalysisSession }>()
+const props = defineProps<{ session: AnalysisSession; compact?: boolean }>()
 const { t } = useI18n()
 const apiStore = useApiServerStore()
 const open = ref(false)
@@ -29,9 +29,10 @@ onMounted(loadSources)
 
 <template>
   <div
-    class="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[11px] text-gray-500 dark:text-gray-400"
+    class="flex min-w-0 items-center text-[11px] text-gray-500 dark:text-gray-400"
+    :class="compact ? 'shrink-0' : 'mt-2 flex-wrap justify-between gap-x-3 gap-y-1.5'"
   >
-    <div class="flex min-w-0 flex-wrap items-center gap-2">
+    <div v-if="!compact" class="flex min-w-0 flex-wrap items-center gap-2">
       <PlatformBadge :platform="session.platform" />
       <span v-if="sourceNames" class="max-w-64 truncate" :title="sourceNames">{{ sourceNames }}</span>
       <span>{{ t(`layout.filter.${session.type}`) }}</span>
@@ -47,7 +48,7 @@ onMounted(loadSources)
       "
     >
       <UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" :aria-label="t('layout.sources.details')">
-        {{ t('layout.sources.details') }}
+        <span v-if="!compact">{{ t('layout.sources.details') }}</span>
       </UButton>
       <template #content>
         <div class="flex items-center justify-between gap-3">
@@ -61,6 +62,12 @@ onMounted(loadSources)
             @click="open = false"
           />
         </div>
+        <p v-if="compact" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <PlatformBadge :platform="session.platform" />
+          <span>{{ t(`layout.filter.${session.type}`) }}</span>
+          <span>{{ t('layout.sessionInfo', { count: session.messageCount.toLocaleString() }) }}</span>
+          <span v-if="sourceNames" class="w-full break-words">{{ sourceNames }}</span>
+        </p>
         <dl class="mt-3 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 text-xs">
           <dt class="text-gray-500 dark:text-gray-400">{{ t('layout.sources.platform') }}</dt>
           <dd><PlatformBadge :platform="session.platform" /></dd>
@@ -93,6 +100,12 @@ onMounted(loadSources)
                 {{ t(source.enabled ? 'layout.sources.automatic' : 'layout.sources.paused') }}
               </span>
             </div>
+            <p v-if="compact" class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <PlatformBadge :platform="session.platform" />
+              <span>{{ t(`layout.filter.${session.type}`) }}</span>
+              <span>{{ t('layout.sessionInfo', { count: session.messageCount.toLocaleString() }) }}</span>
+              <span v-if="sourceNames" class="w-full break-words">{{ sourceNames }}</span>
+            </p>
             <dl class="mt-3 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2.5 text-xs">
               <dt class="text-gray-500 dark:text-gray-400">{{ t('layout.sources.interval') }}</dt>
               <dd>{{ t('layout.sources.minutes', { count: source.intervalMinutes }) }}</dd>

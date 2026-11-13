@@ -64,6 +64,7 @@ const navigationItems = computed(() =>
         <UTooltip :text="t('analysis.tooltip.incrementalImport')">
           <UButton
             icon="i-heroicons-plus-circle"
+            :aria-label="t('analysis.tooltip.incrementalImport')"
             variant="ghost"
             color="gray"
             size="sm"
@@ -74,6 +75,7 @@ const navigationItems = computed(() =>
         <UTooltip :text="t('analysis.tooltip.memberManagement')">
           <UButton
             icon="i-heroicons-user-group"
+            :aria-label="t('analysis.tooltip.memberManagement')"
             variant="ghost"
             color="gray"
             size="sm"
@@ -86,6 +88,7 @@ const navigationItems = computed(() =>
           <UButton
             data-tools-panel-trigger
             icon="i-heroicons-ellipsis-horizontal"
+            :aria-label="t('analysis.tooltip.more')"
             variant="ghost"
             color="gray"
             size="sm"
@@ -95,11 +98,11 @@ const navigationItems = computed(() =>
         </UTooltip>
       </template>
       <CaptureButton v-else-if="showSessionActions" color="gray" />
+      <SessionSourceInfo :key="session.id" :session="session" compact />
     </template>
 
-    <SessionSourceInfo :key="session.id" :session="session" />
     <div
-      class="mt-3 flex flex-col items-stretch gap-2 sm:min-h-8 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      class="mt-1.5 flex flex-col items-stretch gap-2 sm:min-h-8 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
     >
       <PageTabs v-model="activeTab" class="min-w-0 shrink" :items="navigationItems" />
       <!-- 不使用时间范围的一级 Tab 不挂载筛选器，避免发起无关查询。 -->

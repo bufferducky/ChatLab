@@ -582,7 +582,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-hidden">
+  <div class="flex h-full flex-col overflow-hidden bg-chat-bg dark:bg-chat-dark">
     <!-- 加载中 -->
     <div v-if="isLoading" class="flex h-full items-center justify-center">
       <div class="text-center">

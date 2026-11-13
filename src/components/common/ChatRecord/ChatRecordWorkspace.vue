@@ -5,6 +5,7 @@
  * The drawer and Memory > Records reuse the continuous message stream,
  * summary timeline, and bidirectional scroll synchronization.
  */
+import { useLocalStorage } from '@vueuse/core'
 import { computed, nextTick, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
@@ -44,7 +45,7 @@ const { currentSessionId } = storeToRefs(sessionStore)
 
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null)
 const localQuery = ref<ChatRecordQuery>({})
-const timelineCollapsed = ref(false)
+const timelineCollapsed = useLocalStorage('chatlab:records:timeline-collapsed', true)
 const activeSessionId = ref<number | undefined>()
 const sessionsCache = ref<ChatSessionItem[]>([])
 const matchedSessionIds = ref<Set<number> | undefined>()
@@ -215,7 +216,7 @@ watch([() => props.active, fallbackSessionId, () => props.initialQuery], () => i
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div
-      class="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-page-dark"
+      class="flex min-h-0 flex-1 flex-col overflow-hidden bg-chat-bg dark:bg-chat-dark"
       data-testid="chat-record-workspace"
     >
       <FilterPanel
