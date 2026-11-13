@@ -29,6 +29,7 @@ docs/.vitepress/cache/
 docs/.vitepress/dist/
 apps/cli/native/
 apps/desktop/native/
+apps/desktop/dist-images/
 .history/
 out
 release-config.json
