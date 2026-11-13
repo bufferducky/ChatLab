@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -64,12 +65,13 @@ class Cache:
                     UNIQUE(native_table,native_id));
                 CREATE INDEX IF NOT EXISTS session_seq ON messages(session_id,seq);
                 CREATE INDEX IF NOT EXISTS session_observed ON messages(session_id,observed,seq);
+                CREATE TABLE IF NOT EXISTS image_metadata(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             ''')
         self.path.chmod(0o600)
 
     @contextlib.contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=120)
+        db = sqlite3.connect(self.path.as_uri(), uri=True, timeout=120)
         db.row_factory = sqlite3.Row
         try:
             with db:
@@ -94,6 +96,10 @@ class Cache:
             for row in source.execute('SELECT payload FROM messages ORDER BY rowid'):
                 item = json.loads(row[0])
                 payload = convert_message(item, actors.get(item.get('author_id')), origin)
+                if item.get('attachments'):
+                    db.execute('INSERT OR REPLACE INTO image_metadata VALUES(?,?)',
+                               (payload['platformMessageId'], json.dumps({'text': item.get('text'),
+                                'attachments': item['attachments']}, ensure_ascii=False)))
                 # Old bootstrap history sits outside the pull engine's overlap window.
                 observed = clock - 120 if bootstrap else clock
                 cid = item['conversation_id']
@@ -178,6 +184,32 @@ def extract_new_rows(data, cache):
     os.replace(delta, original)
 
 
+def backfill_image_metadata(data, cache):
+    """Enrich existing bridge messages while the regular decrypted snapshot is available."""
+    from qq_local_interface.protobuf import decode_body
+
+    with cache.connect() as db:
+        db.execute('ATTACH DATABASE ? AS native', ((data / 'nt_msg.db').as_uri() + '?mode=ro',))
+        for table in ('c2c_msg_table', 'group_msg_table'):
+            columns = {row[1] for row in db.execute(f'PRAGMA native.table_info("{table}")')}
+            if '40001' not in columns:
+                continue
+            body = '40800' if '40800' in columns else '40080'
+            # Scan native rows once; 40001 is not guaranteed to be indexed in QQ.
+            # CROSS JOIN fixes the outer loop to the native scan and uses our
+            # existing (native_table,native_id) index for each lookup.
+            pending = db.execute(f'''SELECT m.id,r."{body}" AS body
+                FROM native."{table}" r CROSS JOIN messages m
+                ON m.native_table=? AND m.native_id=r."40001"
+                WHERE json_extract(m.payload,'$.type') IN (1,5,99)
+                AND NOT EXISTS(SELECT 1 FROM image_metadata i WHERE i.id=m.id)''', (table,))
+            for message in pending:
+                decoded = decode_body(message['body'])
+                db.execute('INSERT OR IGNORE INTO image_metadata VALUES(?,?)',
+                           (message['id'], json.dumps({'text': decoded.get('text'),
+                            'attachments': decoded['attachments']}, ensure_ascii=False)))
+
+
 class QQSource:
     def __init__(self, config, cache):
         from qq_local_interface.vault import QQVault
@@ -192,6 +224,7 @@ class QQSource:
 
     def refresh(self):
         from qq_local_interface.index import build_index
+        from snapshot_cache import SnapshotStore
         config = self.vault.config()
         source = Path(config['database_dir'])
         paths = [source / (name + suffix) for name in CORE_DATABASES for suffix in ('', '-wal', '-journal')]
@@ -200,22 +233,23 @@ class QQSource:
             return {'unchanged': True, **self.cache.status()}
         with self.vault._writer(), tempfile.TemporaryDirectory(prefix='.refresh-', dir=self.cache.root) as temp:
             temp = Path(temp)
-            encrypted, data = temp / 'encrypted', temp / 'data'
-            encrypted.mkdir()
-            data.mkdir()
-            available, _ = self.vault._copy_stable(source, encrypted, CORE_DATABASES)
-            keys = self.vault._keys(config['key_file'])
-            for name in available:
-                self.vault._decrypt(encrypted / name, data / name, keys, config['account'],
-                                    encrypted / (name + '-wal') if (encrypted / (name + '-wal')).exists() else None)
-            extract_new_rows(data, self.cache)
-            build_index(data, temp / 'records.db', self.vault.source_id, config['account'], 'chatlab-delta')
-            result = self.cache.ingest(temp / 'records.db', config['origin'])
+            store = SnapshotStore(self.cache.root / 'snapshots')
+            with store.stage(self.vault, config, CORE_DATABASES) as snapshot:
+                backfill_image_metadata(snapshot.data, self.cache)
+                # extract_new_rows replaces nt_msg.db; its files must be detached
+                # from the persistent full snapshot used by the next refresh.
+                data = temp / 'data'
+                snapshot.export(data)
+                extract_new_rows(data, self.cache)
+                build_index(data, temp / 'records.db', self.vault.source_id, config['account'], 'chatlab-delta')
+                result = self.cache.ingest(temp / 'records.db', config['origin'])
+                snapshot.commit()
+                result['snapshot'] = snapshot.metrics
         self.signature = signature
         return result
 
 
-def make_server(cache, config):
+def make_server(cache, config, images=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -241,19 +275,29 @@ def make_server(cache, config):
                     return self.reply(200, {'sessions': sessions[offset:offset + limit],
                         'page': {'hasMore': offset + limit < len(sessions), 'nextCursor': str(offset + limit)}})
                 parts = path.path.strip('/').split('/')
+                if len(parts) in (7, 8) and parts[:3] == ['api', 'v1', 'sessions'] and parts[4] == 'messages' and parts[6] == 'images':
+                    if images is None:
+                        return self.reply(404, {'error': 'Images unavailable'})
+                    sid, mid = unquote(parts[3]), unquote(parts[5])
+                    index = int(parts[7]) if len(parts) == 8 else None
+                    return self.reply(200, images.resolve(sid, mid, index))
                 if len(parts) == 5 and parts[:3] == ['api', 'v1', 'sessions'] and parts[4] == 'messages':
                     since, offset = int(query.get('since', ['0'])[0]), int(query.get('offset', ['0'])[0])
                     if since < 0 or offset < 0:
                         raise ValueError('Negative cursor')
                     return self.reply(200, cache.messages(unquote(parts[3]), since, offset, limit))
                 return self.reply(404, {'error': 'Not found'})
-            except (KeyError, ValueError):
+            except (KeyError, FileNotFoundError):
+                return self.reply(404, {'error': 'Image or conversation unavailable'})
+            except ValueError:
                 return self.reply(400, {'error': 'Invalid request'})
+            except Exception:
+                return self.reply(503, {'error': 'Image source unavailable'})
 
         def reply(self, status, value):
-            body = json.dumps(value, ensure_ascii=False).encode()
+            body = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False).encode()
             self.send_response(status)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Type', 'application/octet-stream' if isinstance(value, bytes) else 'application/json; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
@@ -297,10 +341,15 @@ def main():
         return
 
     def refresh():
+        from snapshot_cache import process_write_bytes
         started = time.monotonic()
+        before_writes = process_write_bytes()
         try:
             result = source.refresh()
             if not result.get('unchanged'):
+                after_writes = process_write_bytes()
+                if before_writes is not None and after_writes is not None:
+                    result['processWriteMiB'] = round((after_writes - before_writes) / 2**20, 3)
                 print(json.dumps({**result, 'durationSeconds': round(time.monotonic() - started, 2)}), flush=True)
         except Exception as error:
             cache.fail(error)
@@ -318,7 +367,11 @@ def main():
         while not stop.wait(max(30, config['interval'])):
             refresh()
 
-    server = make_server(cache, config)
+    # This service also runs through a signed runpy launcher, which does not
+    # automatically put the integration directory on Python's module path.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from image_media import QQImages
+    server = make_server(cache, config, QQImages(source))
     threading.Thread(target=loop, daemon=True).start()
     try:
         server.serve_forever()
