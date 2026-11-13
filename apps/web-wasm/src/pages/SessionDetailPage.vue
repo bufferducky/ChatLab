@@ -112,6 +112,7 @@ watch(
         v-model:active-tab="activeTab"
         v-model:time-range-value="timeRangeValue"
         :title="session.name"
+        :session="session"
         :avatar="isPrivateChat ? otherMemberAvatar : session.groupAvatar"
         :icon="isPrivateChat ? 'i-heroicons-user' : 'i-heroicons-chat-bubble-left-right'"
         :icon-class="

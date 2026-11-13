@@ -49,5 +49,32 @@
   "sessionInfo": "{count} 條訊息",
   "footer": {
     "settings": "設定"
+  },
+  "sources": {
+    "filter": "依訊息來源篩選",
+    "all": "全部來源",
+    "wecomShort": "企微",
+    "more": "更多來源",
+    "clear": "清除篩選",
+    "details": "來源詳情",
+    "platform": "聊天平台",
+    "owner": "記錄擁有者",
+    "importedAt": "匯入時間",
+    "unavailable": "暫無記錄",
+    "unnamed": "未命名資料來源",
+    "automatic": "自動同步",
+    "paused": "已暫停",
+    "interval": "拉取間隔",
+    "minutes": "每 {count} 分鐘",
+    "result": "最近拉取結果",
+    "progress": "增量讀取位置",
+    "progressHint": "讀取位置用於補拉訊息，不代表最近一次同步的執行時間；暫停後仍保留原平台和歷史記錄。",
+    "unlinked": "未關聯自動同步資料來源。平台來自會話記錄；僅憑此資訊無法確定原始匯入方式。",
+    "loadFailed": "資料來源詳情暫時無法載入，仍可查看平台資訊。",
+    "status": {
+      "idle": "尚未完成拉取",
+      "success": "成功",
+      "error": "失敗，請至自動同步設定查看"
+    }
   }
 }

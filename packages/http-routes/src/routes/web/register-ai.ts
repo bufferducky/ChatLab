@@ -5,6 +5,7 @@ import type { StorageRouteContext } from '../../context/storage'
 import { registerAiAgentStreamRoutes } from './ai-agent-stream'
 import { registerAiAssistantRoutes } from './ai-assistants'
 import { registerAiChatRoutes } from './ai-chats'
+import { registerHotspotRoutes } from './hotspots'
 import { registerAiChatTopicRoutes } from './ai-chat-topics'
 import { registerAiLlmStreamRoutes } from './ai-llm-stream'
 import { registerAiLlmRoutes } from './ai-llm'
@@ -58,6 +59,7 @@ export function registerAiRoutes(server: FastifyInstance, ctx: AiRoutesContext, 
   registerAiChatRoutes(server, ctx)
   registerAiMemoryRoutes(server, ctx, memoryProvenanceCoordinator)
   registerAiChatTopicRoutes(server, ctx)
+  registerHotspotRoutes(server, ctx)
   registerAiSummaryRoutes(server, ctx)
   registerAiLogRoutes(server, ctx)
   registerSemanticIndexRoutes(server, ctx)

@@ -1399,8 +1399,9 @@ async function handleCopyMarkdown() {
 }
 
 .ai-user-bubble .prose {
-  font-size: 16px;
-  line-height: 24px;
+  font-size: calc(16px + var(--reading-size-adjustment));
+  font-weight: var(--reading-font-weight);
+  line-height: 1.5;
 }
 
 .ai-message-actions button {

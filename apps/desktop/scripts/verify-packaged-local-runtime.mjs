@@ -32,6 +32,18 @@ export default function verifyPackagedLocalRuntime(context) {
     const { createRequire } = require('node:module');
     const path = require('node:path');
     const requireFromApp = createRequire(path.join(process.env.CHATLAB_PACKAGED_RESOURCES, 'app.asar', 'package.json'));
+    const nativeBinding = path.join(process.env.CHATLAB_PACKAGED_RESOURCES, 'native', 'better_sqlite3.node');
+    const Database = requireFromApp('better-sqlite3');
+    const db = new Database(':memory:', {
+      nativeBinding: require('node:fs').existsSync(nativeBinding) ? nativeBinding : undefined,
+    });
+    try {
+      if (db.prepare('SELECT 1 AS value').get().value !== 1) {
+        throw new Error('Packaged SQLite query failed');
+      }
+    } finally {
+      db.close();
+    }
     const transformers = requireFromApp('@huggingface/transformers');
     if (typeof transformers.pipeline !== 'function') {
       throw new Error('Packaged @huggingface/transformers does not expose pipeline()');
@@ -51,8 +63,8 @@ export default function verifyPackagedLocalRuntime(context) {
 
   if (result.status !== 0) {
     const details = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
-    throw new Error(`Packaged local embedding runtime failed to load${details ? `:\n${details}` : ''}`)
+    throw new Error(`Packaged SQLite or local embedding runtime failed to load${details ? `:\n${details}` : ''}`)
   }
 
-  console.log('[desktop build] Packaged local embedding runtime loaded successfully')
+  console.log('[desktop build] Packaged SQLite query and local embedding runtime checks passed')
 }

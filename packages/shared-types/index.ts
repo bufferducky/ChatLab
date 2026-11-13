@@ -1447,3 +1447,13 @@ export type AnalyticsEventName =
   | 'ai_request_completed'
 
 export type AnalyticsPropertyValue = string | number | boolean
+
+export type {
+  Hotspot,
+  HotspotCategory,
+  HotspotWindow,
+  HotspotSource,
+  HotspotConfig,
+  HotspotStatus,
+  HotspotFeed,
+} from './hotspots'

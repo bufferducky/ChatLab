@@ -130,6 +130,7 @@ const filteredMemberCount = computed(() => {
         v-model:active-tab="activeTab"
         v-model:time-range-value="timeRangeValue"
         :title="session.name"
+        :session="session"
         :avatar="session.groupAvatar"
         icon="i-heroicons-chat-bubble-left-right"
         icon-class="bg-primary-600 text-white dark:bg-primary-500 dark:text-white"

@@ -599,3 +599,5 @@ export type {
   PushImportMember,
   PushImportMeta,
 } from './services'
+
+export { createHotspotService, type HotspotService } from './services/hotspots/service'

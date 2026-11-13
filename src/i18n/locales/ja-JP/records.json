@@ -137,5 +137,13 @@
     "replyTo": "返信",
     "expandMessyContent": "全文を表示",
     "collapseMessyContent": "折りたたむ"
+  },
+  "images": {
+    "image": "画像",
+    "loading": "画像を読み込み中…",
+    "unavailable": "画像を表示できません",
+    "viewOriginal": "元の画像を表示",
+    "loadingOriginal": "元の画像を読み込み中…",
+    "originalUnavailable": "元の画像を表示できません。プレビューは表示できます。"
   }
 }

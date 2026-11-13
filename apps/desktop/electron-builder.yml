@@ -5,7 +5,7 @@ productName: ChatLab Personal
 extraMetadata:
   name: chatlab-personal
   productName: ChatLab Personal
-# 打包完成后使用目标 Electron 真实加载本地 embedding 运行时，避免只检查 package.json。
+# 打包完成后使用目标 Electron 执行 SQLite 查询并加载本地 embedding 运行时。
 afterPack: scripts/verify-packaged-local-runtime.mjs
 # 发布配置
 publish:
@@ -79,6 +79,10 @@ nsis:
 
 # macOS 平台配置
 mac:
+  # 与 Windows 一样显式携带已验证的 Electron ABI binding，避免打入共享 Node ABI 模块。
+  extraResources:
+    - from: native/better_sqlite3.node
+      to: native/better_sqlite3.node
   entitlementsInherit: build/entitlements.mac.plist
   entitlements: build/entitlements.mac.plist
   # 代码签名 - Hardened Runtime 是公证的必要条件
@@ -99,7 +103,7 @@ dmg:
   artifactName: ChatLab-Personal-${version}-${arch}.${ext}
 
 # 是否在构建之前重新编译原生模块。
-# macOS 继续由 electron-builder 重建共享 better-sqlite3；Windows 最终运行时使用
-# win.extraResources 中 desktop 自有的 Electron ABI binding。本地 build:mac/build:win
+# macOS/Windows 最终运行时使用 extraResources 中 desktop 自有的 Electron ABI binding。
+# 其它原生依赖仍由 electron-builder 重建。本地 build:mac/build:win
 # 仍通过 scripts/build-app.mjs 恢复共享 Node ABI，保证 pnpm test 不被破坏。
 npmRebuild: true

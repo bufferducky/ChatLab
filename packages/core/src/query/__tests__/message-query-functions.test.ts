@@ -6,7 +6,8 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
+import { openTestSqliteDatabase } from '../../../../../tests/helpers/sqlite.mts'
 import { getMessageContext, getSearchMessageContext } from '../message-queries'
 import { SqliteTestAdapter } from './sqlite-test-adapter'
 import { CHAT_DB_TABLES, CHAT_DB_INDEXES } from '../../schema/tables'
@@ -35,7 +36,7 @@ function createSqliteExecutor(db: Database.Database): AsyncSqlExecutor {
 }
 
 function createMessageDb(): Database.Database {
-  const db = new Database(':memory:')
+  const db = openTestSqliteDatabase()
   db.exec(`
     CREATE TABLE member (
       id INTEGER PRIMARY KEY,
@@ -130,7 +131,7 @@ describe('message search and context', () => {
   // Prevent common-keyword searches in busy segments from blocking the database for seconds.
   for (const indexed of [true, false]) {
     it(`expands many hits without repeated scans (indexed=${indexed})`, async () => {
-      const db = new Database(':memory:')
+      const db = openTestSqliteDatabase()
       try {
         db.exec(CHAT_DB_TABLES + CHAT_DB_INDEXES)
         db.exec(`INSERT INTO member (platform_id) VALUES ('synthetic');

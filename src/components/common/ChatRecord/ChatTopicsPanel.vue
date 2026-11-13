@@ -398,7 +398,7 @@ onUnmounted(() => {
           <span>{{ t('records.topics.stale') }}</span>
         </div>
 
-        <p v-if="day.overview" class="mb-3 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+        <p v-if="day.overview" class="reading-text mb-3 text-gray-700 dark:text-gray-200">
           {{ day.overview }}
         </p>
 
@@ -423,7 +423,7 @@ onUnmounted(() => {
             <div class="flex items-start justify-between gap-2">
               <div class="flex min-w-0 items-start gap-2">
                 <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="topicColor(topic).dot" />
-                <h3 class="text-xs font-semibold leading-snug text-gray-800 dark:text-gray-100">
+                <h3 class="text-sm font-semibold leading-snug text-gray-800 dark:text-gray-100">
                   {{ topic.title }}
                 </h3>
               </div>
@@ -438,7 +438,7 @@ onUnmounted(() => {
                 {{ t(`records.topics.topicState.${topic.state}`) }}
               </span>
             </div>
-            <p class="mt-1.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ topic.summary }}</p>
+            <p class="reading-text mt-2 text-gray-700 dark:text-gray-200">{{ topic.summary }}</p>
             <div v-if="topic.timeRanges.length" class="mt-2 flex flex-wrap gap-1">
               <span
                 v-for="range in topic.timeRanges"

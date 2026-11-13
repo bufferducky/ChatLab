@@ -49,5 +49,32 @@
   "sessionInfo": "{count} messages",
   "footer": {
     "settings": "Settings"
+  },
+  "sources": {
+    "filter": "Filter by message source",
+    "all": "All sources",
+    "wecomShort": "WeCom",
+    "more": "More sources",
+    "clear": "Clear filters",
+    "details": "Source details",
+    "platform": "Chat platform",
+    "owner": "Record owner",
+    "importedAt": "Imported at",
+    "unavailable": "Not available",
+    "unnamed": "Unnamed source",
+    "automatic": "Automatic sync",
+    "paused": "Paused",
+    "interval": "Pull interval",
+    "minutes": "Every {count} min",
+    "result": "Latest pull result",
+    "progress": "Incremental position",
+    "progressHint": "The position is used to resume imports, not the time the latest sync ran. Pausing keeps the original platform and history.",
+    "unlinked": "No automatic sync source is linked. The platform comes from the conversation metadata; this alone does not establish the original import method.",
+    "loadFailed": "Source details could not be loaded. The platform remains available.",
+    "status": {
+      "idle": "No completed pull",
+      "success": "Success",
+      "error": "Failed; check automatic sync settings"
+    }
   }
 }

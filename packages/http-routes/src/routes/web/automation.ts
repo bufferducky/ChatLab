@@ -81,7 +81,14 @@ export function registerAutomationRoutes(server: FastifyInstance, ctx: Automatio
   })
 
   server.post<{
-    Body: { name?: string; baseUrl: string; token: string; intervalMinutes: number; pullLimit?: number }
+    Body: {
+      name?: string
+      baseUrl: string
+      token: string
+      intervalMinutes: number
+      pullLimit?: number
+      autoDiscoverSessions?: boolean
+    }
   }>('/_web/automation/data-sources', async (request, reply) => {
     const automation = requireAutomation(ctx)
     if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
@@ -99,6 +106,7 @@ export function registerAutomationRoutes(server: FastifyInstance, ctx: Automatio
       intervalMinutes?: number
       pullLimit?: number
       enabled?: boolean
+      autoDiscoverSessions?: boolean
     }
   }>('/_web/automation/data-sources/:id', async (request, reply) => {
     const automation = requireAutomation(ctx)

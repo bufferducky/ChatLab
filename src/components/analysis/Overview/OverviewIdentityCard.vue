@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getChatPlatform } from '@/utils/chat-platform'
 import { useDark } from '@vueuse/core'
 import * as echarts from 'echarts/core'
 import { HeatmapChart, CustomChart } from 'echarts/charts'
@@ -281,7 +282,7 @@ onUnmounted(() => {
               <UIcon v-else name="i-heroicons-user" class="h-4 w-4 opacity-70" />
             </div>
             <span class="whitespace-nowrap">
-              {{ session.platform.toUpperCase() }}
+              {{ t(getChatPlatform(session.platform).labelKey) }}
               ·
               {{
                 session.type === 'private'

@@ -9,6 +9,7 @@
  */
 
 import type { DatabaseAdapter, PreparedStatement } from '@openchatlab/core'
+import { readFileHeadBytes } from '@openchatlab/parser/src/utils'
 import { generateSessionIndex, generateIncrementalSessionIndex, getSessionIndexStats } from '@openchatlab/core'
 import {
   streamParseFile,
@@ -399,7 +400,12 @@ export async function incrementalImport(
     return { success: false, newMessageCount: 0, error: 'error.session_not_found' }
   }
 
-  const metaUpdateMode = options?.metaUpdateMode ?? 'patch'
+  // Pull payloads may omit unchanged metadata. The ChatLab parser otherwise
+  // synthesizes a filename-based name, which must not overwrite the real name.
+  // Inspect the same bounded header window used by the ChatLab JSON parser.
+  const metaUpdateMode =
+    options?.metaUpdateMode ??
+    (formatFeature.id === 'chatlab' && !/"meta"\s*:\s*\{/.test(readFileHeadBytes(filePath, 200000)) ? 'none' : 'patch')
   const memberUpdateMode = options?.memberUpdateMode ?? 'upsert'
   const mapPlatformId = createPlatformIdMapper(options?.senderPlatformIdMappings)
   const preserveFallbackMultiplicity = shouldPreserveFallbackMultiplicity(formatFeature.id)

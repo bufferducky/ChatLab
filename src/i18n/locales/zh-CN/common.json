@@ -143,5 +143,19 @@
     "logoutTitle": "账户",
     "logoutDesc": "退出当前认证登录",
     "logout": "退出登录"
+  },
+  "platform": {
+    "qq": "QQ",
+    "telegram": "Telegram",
+    "discord": "Discord",
+    "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
+    "google-chat": "Google Chat",
+    "line": "LINE",
+    "imessage": "iMessage",
+    "wecom": "企业微信",
+    "weixin": "微信",
+    "mixed": "多平台",
+    "unknown": "来源未知"
   }
 }

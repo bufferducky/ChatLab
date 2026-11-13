@@ -151,6 +151,7 @@ export type {
 
 export {
   queryMessages,
+  getMessageImageReference,
   searchMessagesLike,
   searchMessagesByKeywords,
   getRecentMessages,

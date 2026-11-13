@@ -137,5 +137,13 @@
     "replyTo": "回覆",
     "expandMessyContent": "展開完整內容",
     "collapseMessyContent": "收起"
+  },
+  "images": {
+    "image": "圖片",
+    "loading": "正在載入圖片…",
+    "unavailable": "圖片無法使用",
+    "viewOriginal": "查看原圖",
+    "loadingOriginal": "正在載入原圖…",
+    "originalUnavailable": "原圖無法使用，仍可查看預覽圖"
   }
 }

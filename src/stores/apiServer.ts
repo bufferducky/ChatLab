@@ -350,8 +350,10 @@ export const useApiServerStore = defineStore('apiServer', () => {
   async function fetchDataSources() {
     try {
       dataSources.value = await transport.getDataSources()
+      return true
     } catch (err) {
       console.error('[ApiServerStore] Failed to fetch data sources:', err)
+      return false
     }
   }
 

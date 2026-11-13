@@ -151,6 +151,7 @@ const otherMemberAvatar = computed(() => {
         v-model:active-tab="activeTab"
         v-model:time-range-value="timeRangeValue"
         :title="session.name"
+        :session="session"
         :avatar="otherMemberAvatar"
         icon="i-heroicons-user"
         icon-class="bg-pink-600 text-white dark:bg-pink-500 dark:text-white"

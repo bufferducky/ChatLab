@@ -25,7 +25,7 @@ let _logger: SyncLogger
 
 function startTimer(ds: DataSource, skipInitialPull = false): void {
   stopTimer(ds.id)
-  if (!ds.enabled || ds.intervalMinutes < 1 || ds.sessions.length === 0) return
+  if (!ds.enabled || ds.intervalMinutes < 1 || (ds.sessions.length === 0 && !ds.autoDiscoverSessions)) return
 
   const intervalMs = ds.intervalMinutes * 60 * 1000
 
@@ -38,7 +38,7 @@ function startTimer(ds: DataSource, skipInitialPull = false): void {
   const timer = setInterval(() => {
     try {
       const current = _dsManager.loadAll().find((s) => s.id === ds.id)
-      if (!current || !current.enabled || current.sessions.length === 0) {
+      if (!current || !current.enabled || (current.sessions.length === 0 && !current.autoDiscoverSessions)) {
         stopTimer(ds.id)
         return
       }
@@ -81,7 +81,7 @@ export function initScheduler(options: SchedulerOptions): void {
   }
   initialized = true
   for (const ds of sources) {
-    if (ds.enabled && ds.sessions.length > 0) {
+    if (ds.enabled && (ds.sessions.length > 0 || ds.autoDiscoverSessions)) {
       startTimer(ds)
     }
   }

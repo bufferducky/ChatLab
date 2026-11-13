@@ -143,5 +143,19 @@
     "logoutTitle": "アカウント",
     "logoutDesc": "現在のセッションからログアウト",
     "logout": "ログアウト"
+  },
+  "platform": {
+    "qq": "QQ",
+    "telegram": "Telegram",
+    "discord": "Discord",
+    "whatsapp": "WhatsApp",
+    "instagram": "Instagram",
+    "google-chat": "Google Chat",
+    "line": "LINE",
+    "imessage": "iMessage",
+    "wecom": "WeCom",
+    "weixin": "WeChat",
+    "mixed": "複数プラットフォーム",
+    "unknown": "不明なソース"
   }
 }

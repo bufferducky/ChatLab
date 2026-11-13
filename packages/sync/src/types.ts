@@ -36,11 +36,13 @@ export interface DataSource {
   pullLimit: number
   enabled: boolean
   createdAt: number
+  /** Opt in to importing new conversations discovered on this source. */
+  autoDiscoverSessions?: boolean
   sessions: ImportSession[]
 }
 
 export type DataSourceUpdatable = Partial<
-  Pick<DataSource, 'name' | 'baseUrl' | 'token' | 'intervalMinutes' | 'pullLimit' | 'enabled'>
+  Pick<DataSource, 'name' | 'baseUrl' | 'token' | 'intervalMinutes' | 'pullLimit' | 'enabled' | 'autoDiscoverSessions'>
 >
 
 // ==================== Remote Discovery ====================
