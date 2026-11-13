@@ -92,5 +92,5 @@
 
 ## 提交规范
 
-- 分支规则：功能需求开发前必须新建或切换到功能分支；允许提交到main的例外情况：发版工作流、独立内部文档仓库 `.docs/` 的日常维护
+- 分支规则：本个人 Fork 默认直接在 `main` 分支开发、提交和推送；只有用户明确要求隔离任务时才创建功能分支或 worktree。
 - Commit 规范：使用 Conventional Commits。scope 规则——通用改动 scope 随意（如 `ai`、`import`、`sidebar` 等模块名）；仅当改动是**平台特有**时才使用平台 scope（`electron`、`cli`、`web`）。
