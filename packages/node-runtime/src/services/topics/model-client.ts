@@ -12,10 +12,13 @@ export interface ChatTopicModelResult {
   inputTokens: number
   outputTokens: number
   outputLimit?: 'reasoning' | 'text'
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export interface ChatTopicModelClient {
   modelId: string
+  maxOutputTokens?: number
   complete(
     prompts: { systemPrompt: string; userPrompt: string },
     options: { signal: AbortSignal; sessionId: string }
@@ -31,6 +34,10 @@ export function createChatTopicModelClient(
   const runCompletion = deps.completeSimple ?? completeSimple
   return {
     modelId,
+    maxOutputTokens: Math.min(
+      config.maxTokens ?? model.maxTokens ?? CHAT_TOPIC_MODEL_MAX_TOKENS,
+      CHAT_TOPIC_MODEL_MAX_TOKENS
+    ),
     async complete(prompts, options) {
       const result = await runCompletion(
         model,
@@ -72,6 +79,8 @@ export function createChatTopicModelClient(
         text,
         inputTokens: result.usage.input,
         outputTokens: result.usage.output,
+        ...(result.usage.cacheRead ? { cacheReadTokens: result.usage.cacheRead } : {}),
+        ...(result.usage.cacheWrite ? { cacheWriteTokens: result.usage.cacheWrite } : {}),
         ...(outputLimit ? { outputLimit } : {}),
       }
     },

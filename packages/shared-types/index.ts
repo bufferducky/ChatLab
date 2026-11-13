@@ -1451,9 +1451,16 @@ export type AnalyticsPropertyValue = string | number | boolean
 export type {
   Hotspot,
   HotspotCategory,
+  HotspotKind,
   HotspotWindow,
   HotspotSource,
   HotspotConfig,
   HotspotStatus,
   HotspotFeed,
+  HotspotBudget,
+  HotspotUsage,
+  HotspotDigest,
+  HotspotSearch,
+  HotspotRecommendation,
+  HotspotKnowledgeDraft,
 } from './hotspots'

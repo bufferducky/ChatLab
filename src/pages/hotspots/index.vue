@@ -8,6 +8,9 @@ import type {
   HotspotFeed,
   HotspotSource,
   HotspotWindow,
+  HotspotSearch,
+  HotspotRecommendation,
+  HotspotKnowledgeDraft,
 } from '@openchatlab/shared-types'
 import { useSessionStore } from '@/stores/session'
 import { useLayoutStore } from '@/stores/layout'
@@ -22,13 +25,84 @@ const data = ref<HotspotFeed | null>(null)
 const window = ref<HotspotWindow>('day')
 const category = ref<HotspotCategory | 'all'>('all')
 const savedOnly = ref(false)
+const query = ref('')
+const searchResult = ref<HotspotSearch | null>(null)
+const knowledgeOnly = ref(false)
+const knowledgeDraft = ref<HotspotKnowledgeDraft | null>(null)
+const exportResult = ref<{ path: string; uri: string } | null>(null)
+const recommendations = ref<HotspotRecommendation[]>([])
+const showUsage = ref(false)
+const reconciledAmount = ref<number | null>(null)
+const knowledgeOpen = computed({
+  get: () => knowledgeDraft.value !== null,
+  set: (value) => {
+    if (!value) knowledgeDraft.value = null
+  },
+})
+const usage = computed(() => data.value?.usage)
+const candidateIds = computed(() => new Set(data.value?.knowledge.map((candidate) => candidate.id) ?? []))
+function money(value: number) {
+  return new Intl.NumberFormat(locale.value, {
+    style: 'currency',
+    currency: usage.value?.currency ?? 'CNY',
+    maximumFractionDigits: 4,
+  }).format(value)
+}
+function clearSearch() {
+  searchResult.value = null
+  query.value = ''
+}
+function toggleKnowledge() {
+  knowledgeOnly.value = !knowledgeOnly.value
+  searchResult.value = null
+}
+async function searchTopics() {
+  if (!query.value.trim()) {
+    searchResult.value = null
+    return
+  }
+  await perform(async () => {
+    searchResult.value = await hotspotService.search(query.value)
+    knowledgeOnly.value = false
+  })
+}
+async function prepareKnowledge(item: Hotspot) {
+  await perform(async () => {
+    knowledgeDraft.value = await hotspotService.knowledgeDraft(item.id)
+    exportResult.value = null
+  })
+}
+async function approveKnowledge() {
+  const value = knowledgeDraft.value
+  if (!value) return
+  await perform(async () => {
+    exportResult.value = await hotspotService.exportKnowledge(value.id, value.content)
+  })
+}
+function focusTopic(id: string) {
+  const item = data.value?.items.find((item) => item.id === id)
+  if (!item) return
+  searchResult.value = { query: item.title, matches: [{ item, reason: '' }], scanned: 1 }
+  knowledgeOnly.value = false
+  expanded.value = id
+}
+
+const showAll = ref(false)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
 const settings = ref(false)
 const groupSearch = ref('')
 const expanded = ref<string | null>(null)
-const draft = ref<HotspotConfig>({ sessionIds: [], enabled: false, locale: locale.value, interests: '' })
+const draft = ref<HotspotConfig>({
+  sessionIds: [],
+  enabled: false,
+  locale: locale.value,
+  interests: '',
+  categoryPriorities: {},
+  reducedTopics: [],
+  reducedSessionIds: [],
+})
 const windows: HotspotWindow[] = ['day', 'week', 'month']
 const categories = ['all', 'ai', 'tech', 'news', 'gossip', 'other'] as const
 const groups = computed(() =>
@@ -38,9 +112,50 @@ const groups = computed(() =>
       `${session.name} ${session.platform}`.toLowerCase().includes(groupSearch.value.trim().toLowerCase())
   )
 )
-const visible = computed(
-  () => data.value?.items.filter((item) => category.value === 'all' || item.category === category.value) ?? []
+const filtered = computed(() =>
+  searchResult.value
+    ? searchResult.value.matches.map((match) => match.item)
+    : knowledgeOnly.value
+      ? (data.value?.knowledge.map((candidate) => candidate.item) ?? [])
+      : (data.value?.items.filter((item) => category.value === 'all' || item.category === category.value) ?? [])
 )
+const visible = computed(() =>
+  searchResult.value || knowledgeOnly.value || savedOnly.value || showAll.value
+    ? filtered.value
+    : filtered.value.filter((item) => data.value?.highlights.includes(item.id))
+)
+function categoryCount(value: HotspotCategory | 'all') {
+  return (
+    data.value?.items.filter(
+      (item) =>
+        (value === 'all' || item.category === value) &&
+        (savedOnly.value || showAll.value || data.value?.highlights.includes(item.id))
+    ).length ?? 0
+  )
+}
+function groupName(id: string) {
+  return sessions.sessions.find((session) => session.id === id)?.name ?? id
+}
+function sourceGroups(item: Hotspot) {
+  return [
+    ...new Map(
+      item.sources
+        .filter((source) => data.value?.config.sessionIds.includes(source.sessionId))
+        .map((source) => [source.sessionId, source])
+    ).values(),
+  ]
+}
+function reduceTopic(item: Hotspot) {
+  return perform(() =>
+    hotspotService.feedback(item.id, { topic: true, reduced: !data.value?.config.reducedTopics?.includes(item.topic) })
+  )
+}
+function reduceGroup(item: Hotspot, sessionId: string) {
+  return perform(() =>
+    hotspotService.feedback(item.id, { sessionId, reduced: !data.value?.config.reducedSessionIds?.includes(sessionId) })
+  )
+}
+
 let version = 0
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
@@ -73,6 +188,32 @@ async function load(quiet = false) {
 }
 function openSettings() {
   draft.value = structuredClone(data.value ? JSON.parse(JSON.stringify(data.value.config)) : draft.value)
+  draft.value.categoryPriorities = Object.fromEntries(
+    categories.filter((value) => value !== 'all').map((value) => [value, draft.value.categoryPriorities?.[value] ?? 1])
+  )
+  draft.value.budget = structuredClone(
+    draft.value.budget ?? {
+      monthlyLimit: null,
+      currency: 'CNY',
+      modelId: '',
+      inputPerMillion: null,
+      outputPerMillion: null,
+    }
+  )
+  const modelId = data.value?.usage.modelId ?? ''
+  if (draft.value.budget.modelId !== modelId) {
+    draft.value.budget.inputPerMillion = null
+    draft.value.budget.outputPerMillion = null
+  }
+  draft.value.budget.modelId = modelId
+  void hotspotService
+    .recommendations()
+    .then((value) => {
+      recommendations.value = value
+    })
+    .catch((cause) => {
+      error.value = String(cause)
+    })
   groupSearch.value = ''
   settings.value = true
 }
@@ -90,7 +231,13 @@ async function perform(action: () => Promise<unknown>) {
 }
 async function saveSettings() {
   await perform(async () => {
-    await hotspotService.configure({ ...draft.value, locale: locale.value })
+    const cfg = structuredClone(JSON.parse(JSON.stringify(draft.value))) as HotspotConfig
+    if (cfg.budget)
+      for (const key of ['monthlyLimit', 'inputPerMillion', 'outputPerMillion'] as const) {
+        const value = cfg.budget[key] as unknown
+        cfg.budget[key] = value === '' || value === null ? null : Number(value)
+      }
+    await hotspotService.configure({ ...cfg, locale: locale.value })
     settings.value = false
   })
 }
@@ -101,6 +248,7 @@ function source(source: HotspotSource) {
   layout.openChatRecords({ sessionId: source.sessionId, scrollToMessageId: source.messageId })
 }
 watch([window, savedOnly], () => {
+  searchResult.value = null
   void load()
 })
 onMounted(async () => {
@@ -152,6 +300,15 @@ onUnmounted(() => {
           >
             {{ t(data?.status.running ? 'hotspots.updating' : 'hotspots.update') }}
           </UButton>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            :disabled="busy || loading || data?.status.running || !data?.config.sessionIds.length"
+            :title="t('hotspots.rebuildHint')"
+            @click="perform(() => hotspotService.update(true))"
+          >
+            {{ t('hotspots.rebuild') }}
+          </UButton>
         </div>
       </header>
       <p v-if="IS_WEB_WASM" class="py-12 text-gray-500">{{ t('hotspots.nodeOnly') }}</p>
@@ -177,6 +334,65 @@ onUnmounted(() => {
             {{ t('common.retry') }}
           </UButton>
         </div>
+        <section
+          v-if="usage"
+          class="mb-4 border-y border-gray-200 py-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <p>
+              {{ t('hotspots.usageTitle', { month: usage.month }) }} · {{ money(usage.estimatedCost) }}
+              <span v-if="usage.unpricedCalls || usage.uncertainCalls">
+                · {{ t('hotspots.partialCost', { count: usage.unpricedCalls, uncertain: usage.uncertainCalls }) }}
+              </span>
+              <span v-if="usage.monthlyLimit !== null">/ {{ money(usage.monthlyLimit) }}</span>
+              · {{ t('hotspots.usageCalls', { count: usage.calls, tokens: usage.inputTokens + usage.outputTokens }) }}
+            </p>
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              :aria-expanded="showUsage"
+              @click="showUsage = !showUsage"
+            >
+              {{ t('hotspots.usageDetails') }}
+            </UButton>
+          </div>
+          <p class="mt-2">{{ t('hotspots.costEstimateHint') }}</p>
+          <p v-if="usage.paused" role="alert" class="mt-2 text-red-600 dark:text-red-400">
+            {{ t(`hotspots.budgetPaused.${usage.reason}`) }}
+          </p>
+          <p v-else-if="usage.nearLimit" class="mt-2 text-primary-600 dark:text-primary-400">
+            {{ t('hotspots.nearBudget') }}
+          </p>
+          <div v-if="showUsage" class="mt-3 space-y-3">
+            <p>{{ t('hotspots.unpricedUsage', { count: usage.unpricedCalls, uncertain: usage.uncertainCalls }) }}</p>
+            <div v-for="group in usage.byGroup" :key="group.sessionId" class="flex justify-between gap-4">
+              <span>{{ groupName(group.sessionId) }}</span>
+              <span>{{ group.tokens }} token · {{ money(group.estimatedCost) }}</span>
+            </div>
+            <div v-if="usage.unpricedCalls || usage.uncertainCalls || usage.reason === 'uncertain'" class="space-y-2">
+              <label class="block">
+                {{ t('hotspots.reconcileHint') }}
+                <input
+                  v-model.number="reconciledAmount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="ml-2 w-28 rounded border border-gray-300 bg-transparent p-2 dark:border-gray-700"
+                />
+              </label>
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="outline"
+                :disabled="busy || data?.status.running || typeof reconciledAmount !== 'number' || reconciledAmount < 0"
+                @click="perform(() => hotspotService.reconcileUsage(Number(reconciledAmount)))"
+              >
+                {{ t('hotspots.reconcile') }}
+              </UButton>
+            </div>
+          </div>
+        </section>
         <div class="flex flex-wrap items-center justify-between gap-4 py-4">
           <div
             role="group"
@@ -205,7 +421,84 @@ onUnmounted(() => {
             {{ t('hotspots.saved') }}
           </UButton>
         </div>
-        <div role="group" :aria-label="t('hotspots.categoryLabel')" class="mb-5 flex flex-wrap gap-2">
+        <form class="mb-5 flex flex-wrap gap-2" @submit.prevent="searchTopics">
+          <UInput
+            v-model="query"
+            :aria-label="t('hotspots.searchTopics')"
+            :placeholder="t('hotspots.searchTopicsHint')"
+            icon="i-lucide-search"
+            class="min-w-48 flex-1"
+            maxlength="500"
+          />
+          <UButton type="submit" :disabled="busy || data?.status.running || !query.trim()">
+            {{ t('hotspots.searchTopics') }}
+          </UButton>
+          <UButton v-if="searchResult" color="neutral" variant="ghost" @click="clearSearch">
+            {{ t('common.back') }}
+          </UButton>
+          <UButton
+            color="neutral"
+            :variant="knowledgeOnly ? 'soft' : 'ghost'"
+            :aria-pressed="knowledgeOnly"
+            @click="toggleKnowledge"
+          >
+            {{ t('hotspots.knowledgeCandidates', { count: data?.knowledge.length ?? 0 }) }}
+          </UButton>
+        </form>
+        <p v-if="searchResult" class="mb-4 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('hotspots.searchCoverage', { count: searchResult.scanned }) }}
+        </p>
+        <section
+          v-if="!searchResult && !knowledgeOnly && !savedOnly && data?.items.length"
+          class="mb-6 border-l-2 border-primary-400 bg-primary-50/40 px-4 py-4 dark:bg-primary-400/5"
+        >
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <h2 class="text-base font-medium">{{ t(`hotspots.digestTitles.${window}`) }}</h2>
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              :disabled="busy || data.status.running"
+              @click="perform(() => hotspotService.summarize(window))"
+            >
+              {{ t(data.digest ? 'hotspots.refreshDigest' : 'hotspots.generateDigest') }}
+            </UButton>
+          </div>
+          <p v-if="data.digest?.stale" class="mb-2 text-xs text-primary-600 dark:text-primary-400">
+            {{ t('hotspots.digestStale') }}
+          </p>
+          <template v-if="data.digest">
+            <p class="text-sm leading-7">{{ data.digest.overview }}</p>
+            <details v-for="(section, n) in data.digest.sections" :key="n" class="mt-3 text-sm">
+              <summary class="cursor-pointer font-medium focus-visible:outline-2 focus-visible:outline-primary-500">
+                {{ section.title }}
+              </summary>
+              <p class="mt-2 whitespace-pre-line leading-7 text-gray-600 dark:text-gray-300">{{ section.text }}</p>
+              <div class="mt-1 flex flex-wrap gap-2">
+                <UButton
+                  v-for="id in section.hotspotIds"
+                  :key="id"
+                  size="xs"
+                  color="neutral"
+                  variant="link"
+                  @click="focusTopic(id)"
+                >
+                  {{ data.items.find((item) => item.id === id)?.title }}
+                </UButton>
+              </div>
+            </details>
+            <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('hotspots.digestCoverage') }} · {{ date(data.digest.generatedAt) }}
+            </p>
+          </template>
+          <p v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t('hotspots.digestHint') }}</p>
+        </section>
+        <div
+          v-if="!searchResult && !knowledgeOnly"
+          role="group"
+          :aria-label="t('hotspots.categoryLabel')"
+          class="mb-5 flex flex-wrap gap-2"
+        >
           <UButton
             v-for="item in categories"
             :key="item"
@@ -215,7 +508,16 @@ onUnmounted(() => {
             size="sm"
             @click="category = item"
           >
-            {{ t(`hotspots.categories.${item}`) }}
+            {{ t(`hotspots.categories.${item}`) }} · {{ categoryCount(item) }}
+          </UButton>
+        </div>
+        <div
+          v-if="data && !savedOnly && !searchResult && !knowledgeOnly"
+          class="mb-2 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400"
+        >
+          <p>{{ t(showAll ? 'hotspots.allHint' : 'hotspots.curatedHint', { count: data.highlights.length }) }}</p>
+          <UButton size="xs" color="neutral" variant="ghost" :aria-pressed="showAll" @click="showAll = !showAll">
+            {{ t(showAll ? 'hotspots.showCurated' : 'hotspots.showAll') }}
           </UButton>
         </div>
         <div v-if="loading" role="status" :aria-label="t('common.loading')" class="space-y-6 py-4">
@@ -251,15 +553,54 @@ onUnmounted(() => {
                     {{ t(`hotspots.categories.${item.category}`) }}
                   </span>
                   <time>{{ date(item.updatedAt) }}</time>
+                  <span v-if="item.activity !== 'new'" class="text-primary-600 dark:text-primary-400">
+                    {{ t(`hotspots.activity.${item.activity}`) }}
+                  </span>
+                  <span v-if="item.kind === 'question'">{{ t('hotspots.unanswered') }}</span>
+                  <span v-if="item.confidence === 'disputed'">{{ t('hotspots.disputed') }}</span>
                   <span v-if="item.confidence === 'rumor'">{{ t('hotspots.rumor') }}</span>
                   <span v-if="item.readAt">{{ t('hotspots.read') }}</span>
                 </div>
+                <p
+                  v-if="searchResult?.matches.find((match) => match.item.id === item.id)?.reason"
+                  class="mb-2 text-xs text-primary-600 dark:text-primary-400"
+                >
+                  {{ searchResult.matches.find((match) => match.item.id === item.id)?.reason }}
+                </p>
                 <h2 class="text-lg font-semibold leading-7">{{ item.title }}</h2>
                 <p class="mt-3 whitespace-pre-line text-sm leading-7 text-gray-700 dark:text-gray-300">
                   {{ item.summary }}
                 </p>
+                <p v-if="item.conclusion" class="mt-3 text-sm leading-7">
+                  <span class="font-medium">{{ t(`hotspots.outcomes.${item.outcome ?? 'open'}`) }} ·</span>
+                  {{ item.conclusion }}
+                </p>
+                <p
+                  v-if="knowledgeOnly && data?.knowledge.find((candidate) => candidate.id === item.id)?.exportedPath"
+                  class="mt-2 break-all text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t('hotspots.exported') }} ·
+                  {{ data.knowledge.find((candidate) => candidate.id === item.id)?.exportedPath }}
+                  <span v-if="data.knowledge.find((candidate) => candidate.id === item.id)?.changed">
+                    {{ t('hotspots.knowledgeChanged') }}
+                  </span>
+                </p>
                 <p v-if="item.why" class="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ item.why }}</p>
+                <p v-if="item.activity === 'renewed'" class="mt-2 text-xs leading-6 text-gray-500 dark:text-gray-400">
+                  {{ t('hotspots.renewedHint') }}
+                </p>
                 <div class="mt-4 flex flex-wrap gap-1">
+                  <UButton
+                    v-if="candidateIds.has(item.id)"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    icon="i-lucide-notebook-pen"
+                    :disabled="busy"
+                    @click="prepareKnowledge(item)"
+                  >
+                    {{ t('hotspots.reviewKnowledge') }}
+                  </UButton>
                   <UButton
                     size="xs"
                     variant="ghost"
@@ -300,12 +641,42 @@ onUnmounted(() => {
                   >
                     {{ t(item.dismissed ? 'hotspots.restore' : 'hotspots.dismiss') }}
                   </UButton>
+                  <UButton size="xs" variant="ghost" color="neutral" :disabled="busy" @click="reduceTopic(item)">
+                    {{
+                      t(
+                        data?.config.reducedTopics?.includes(item.topic)
+                          ? 'hotspots.restoreTopic'
+                          : 'hotspots.reduceTopic',
+                        { topic: item.topic }
+                      )
+                    }}
+                  </UButton>
                 </div>
                 <div
                   v-if="expanded === item.id"
                   class="mt-4 space-y-4 border-l-2 border-gray-200 pl-4 dark:border-gray-700"
                 >
                   <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('hotspots.evidenceHint') }}</p>
+                  <div class="flex flex-wrap gap-2">
+                    <UButton
+                      v-for="group in sourceGroups(item)"
+                      :key="group.sessionId"
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                      :disabled="busy"
+                      @click="reduceGroup(item, group.sessionId)"
+                    >
+                      {{
+                        t(
+                          data?.config.reducedSessionIds?.includes(group.sessionId)
+                            ? 'hotspots.restoreGroup'
+                            : 'hotspots.reduceGroup',
+                          { group: group.sessionName }
+                        )
+                      }}
+                    </UButton>
+                  </div>
                   <div v-for="evidence in item.sources" :key="`${evidence.sessionId}:${evidence.messageId}`">
                     <button
                       type="button"
@@ -376,6 +747,148 @@ onUnmounted(() => {
               :placeholder="t('hotspots.interestsHint')"
             />
           </label>
+          <fieldset class="space-y-3">
+            <legend class="mb-3 text-sm font-medium">{{ t('hotspots.priorities') }}</legend>
+            <label
+              v-for="item in categories.filter((value) => value !== 'all')"
+              :key="item"
+              class="flex items-center justify-between gap-4 text-sm"
+            >
+              <span>{{ t(`hotspots.categories.${item}`) }}</span>
+              <select
+                v-if="draft.categoryPriorities"
+                v-model.number="draft.categoryPriorities[item]"
+                class="rounded border border-gray-300 bg-page-bg px-2 py-1 text-sm focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-gray-700 dark:bg-page-dark"
+              >
+                <option :value="0">{{ t('hotspots.priorityLow') }}</option>
+                <option :value="1">{{ t('hotspots.priorityNormal') }}</option>
+                <option :value="2">{{ t('hotspots.priorityHigh') }}</option>
+              </select>
+            </label>
+          </fieldset>
+          <div v-if="draft.reducedTopics?.length || draft.reducedSessionIds?.length" class="space-y-2">
+            <p class="text-sm font-medium">{{ t('hotspots.feedbackSettings') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('hotspots.feedbackHint') }}</p>
+            <div class="flex flex-wrap gap-2">
+              <UButton
+                v-for="topic in draft.reducedTopics"
+                :key="topic"
+                size="xs"
+                color="neutral"
+                variant="outline"
+                @click="draft.reducedTopics = draft.reducedTopics?.filter((value) => value !== topic)"
+              >
+                {{ t('hotspots.restoreTopic', { topic }) }}
+              </UButton>
+              <UButton
+                v-for="id in draft.reducedSessionIds"
+                :key="id"
+                size="xs"
+                color="neutral"
+                variant="outline"
+                @click="draft.reducedSessionIds = draft.reducedSessionIds?.filter((value) => value !== id)"
+              >
+                {{ t('hotspots.restoreGroup', { group: groupName(id) }) }}
+              </UButton>
+            </div>
+          </div>
+          <section v-if="recommendations.length" class="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-800">
+            <h3 class="text-sm font-medium">{{ t('hotspots.groupRecommendations') }}</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('hotspots.recommendationsHint') }}</p>
+            <div v-for="group in recommendations" :key="group.sessionId" class="space-y-1 text-xs">
+              <p class="font-medium">
+                {{ groupName(group.sessionId) }} · {{ t(`hotspots.recommendations.${group.recommendation}`) }}
+              </p>
+              <p class="text-gray-500 dark:text-gray-400">
+                {{
+                  t('hotspots.recommendationEvidence', {
+                    analyzed: group.analyzedMessages,
+                    useful: group.usefulTopics,
+                    topics: group.topics,
+                    noise: group.noiseMessages,
+                    repeats: group.repeatedSources,
+                  })
+                }}
+              </p>
+              <UButton
+                v-if="group.recommendation !== 'insufficient'"
+                size="xs"
+                color="neutral"
+                variant="link"
+                @click="
+                  draft.reducedSessionIds = draft.reducedSessionIds?.includes(group.sessionId)
+                    ? draft.reducedSessionIds.filter((id) => id !== group.sessionId)
+                    : [...(draft.reducedSessionIds ?? []), group.sessionId]
+                "
+              >
+                {{
+                  t(
+                    draft.reducedSessionIds?.includes(group.sessionId)
+                      ? 'hotspots.restoreGroup'
+                      : 'hotspots.reduceGroup',
+                    { group: groupName(group.sessionId) }
+                  )
+                }}
+              </UButton>
+            </div>
+          </section>
+          <fieldset v-if="draft.budget" class="space-y-3 border-t border-gray-200 pt-4 text-sm dark:border-gray-800">
+            <legend class="pt-4 font-medium">{{ t('hotspots.budgetTitle') }}</legend>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('hotspots.budgetHint') }}</p>
+            <label class="flex items-center justify-between gap-4">
+              {{ t('hotspots.monthlyLimit') }}
+              <input
+                v-model.number="draft.budget.monthlyLimit"
+                type="number"
+                min="0"
+                step="0.01"
+                :placeholder="t('hotspots.unlimited')"
+                class="w-32 rounded border border-gray-300 bg-transparent p-2 dark:border-gray-700"
+              />
+            </label>
+            <label class="flex items-center justify-between gap-4">
+              {{ t('hotspots.currency') }}
+              <select
+                v-model="draft.budget.currency"
+                class="rounded border border-gray-300 bg-page-bg p-2 dark:border-gray-700 dark:bg-page-dark"
+              >
+                <option value="CNY">CNY</option>
+                <option value="USD">USD</option>
+              </select>
+            </label>
+            <p class="break-all text-xs text-gray-500 dark:text-gray-400">
+              {{ t('hotspots.pricedModel') }} · {{ draft.budget.modelId || t('hotspots.noModel') }}
+            </p>
+            <label class="flex items-center justify-between gap-4">
+              {{ t('hotspots.inputPrice') }}
+              <input
+                v-model.number="draft.budget.inputPerMillion"
+                type="number"
+                min="0"
+                step="0.01"
+                class="w-32 rounded border border-gray-300 bg-transparent p-2 dark:border-gray-700"
+              />
+            </label>
+            <label class="flex items-center justify-between gap-4">
+              {{ t('hotspots.outputPrice') }}
+              <input
+                v-model.number="draft.budget.outputPerMillion"
+                type="number"
+                min="0"
+                step="0.01"
+                class="w-32 rounded border border-gray-300 bg-transparent p-2 dark:border-gray-700"
+              />
+            </label>
+          </fieldset>
+          <label class="block text-sm">
+            <span class="mb-2 block">{{ t('hotspots.obsidianVault') }}</span>
+            <input
+              v-model="draft.obsidianVault"
+              type="text"
+              :placeholder="t('hotspots.obsidianVaultHint')"
+              class="w-full rounded border border-gray-300 bg-transparent p-2 dark:border-gray-700"
+            />
+          </label>
           <label class="flex items-center gap-3 text-sm">
             <input v-model="draft.enabled" type="checkbox" class="accent-primary-500" />
             {{ t('hotspots.enableAuto') }}
@@ -387,6 +900,49 @@ onUnmounted(() => {
         <div class="flex w-full justify-end gap-2">
           <UButton color="neutral" variant="ghost" @click="settings = false">{{ t('common.cancel') }}</UButton>
           <UButton :disabled="busy" @click="saveSettings">{{ t('common.save') }}</UButton>
+        </div>
+      </template>
+    </UModal>
+    <UModal
+      v-model:open="knowledgeOpen"
+      :title="t('hotspots.reviewKnowledge')"
+      :description="t('hotspots.knowledgeReviewHint')"
+      :ui="{ content: 'sm:max-w-3xl' }"
+    >
+      <template #body>
+        <div v-if="knowledgeDraft" class="space-y-3">
+          <label class="block text-sm">
+            <span class="mb-2 block">{{ t('hotspots.knowledgeDraft') }}</span>
+            <textarea
+              v-model="knowledgeDraft.content"
+              rows="18"
+              class="w-full rounded border border-gray-300 bg-transparent p-3 font-mono text-xs leading-6 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-gray-700"
+            />
+          </label>
+          <p v-if="!data?.config.obsidianVault" class="text-sm text-gray-500 dark:text-gray-400">
+            {{ t('hotspots.configureVaultFirst') }}
+          </p>
+          <a
+            v-if="exportResult"
+            :href="exportResult.uri"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="block break-all text-sm text-primary-600 hover:underline dark:text-primary-400"
+          >
+            {{ t('hotspots.openNote') }} · {{ exportResult.path }}
+          </a>
+          <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex w-full justify-end gap-2">
+          <UButton color="neutral" variant="ghost" @click="knowledgeDraft = null">{{ t('common.cancel') }}</UButton>
+          <UButton
+            :disabled="busy || !data?.config.obsidianVault || !knowledgeDraft?.content.trim()"
+            @click="approveKnowledge"
+          >
+            {{ t('hotspots.approveKnowledge') }}
+          </UButton>
         </div>
       </template>
     </UModal>
