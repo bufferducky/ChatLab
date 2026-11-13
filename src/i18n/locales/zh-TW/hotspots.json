@@ -50,7 +50,7 @@
   "searchGroups": "搜尋群聊名稱或平台",
   "selectedGroups": "已選擇 {count} 個群聊",
   "curatedHint": "本期精選 {count} 則，優先工具、方案與明確結論",
-  "allHint": "全部話題包含待解答問題及已降低優先級的內容",
+  "allHint": "本期共 {count} 個話題，按價值與偏好排序；待解答問題排在後面",
   "showAll": "展開全部話題",
   "showCurated": "只看精選",
   "unanswered": "尚無明確答案",
@@ -133,5 +133,6 @@
     "pricing": "目前模型尚無可用單價；設定金額上限後暫停呼叫，請補充單價。",
     "uncertain": "本月有未計價、不確定或其他幣別費用。請核對帳單並補錄後再繼續。"
   },
-  "partialCost": "僅已計價部分，另有 {count} 次未計價 / {uncertain} 次費用不確定"
+  "partialCost": "僅已計價部分，另有 {count} 次未計價 / {uncertain} 次費用不確定",
+  "viewMessage": "查看原訊息"
 }

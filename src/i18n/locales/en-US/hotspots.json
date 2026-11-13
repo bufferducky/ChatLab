@@ -50,7 +50,7 @@
   "searchGroups": "Search group name or platform",
   "selectedGroups": "{count} groups selected",
   "curatedHint": "{count} highlights, prioritizing tools, solutions and clear conclusions",
-  "allHint": "All topics include unanswered questions and content you deprioritized",
+  "allHint": "{count} topics, ordered by value and preferences; unanswered questions come last",
   "showAll": "Show all topics",
   "showCurated": "Highlights only",
   "unanswered": "No clear answer yet",
@@ -133,5 +133,6 @@
     "pricing": "Current model prices are missing. Calls pause under a money limit until prices are configured.",
     "uncertain": "This month has unpriced, uncertain or other-currency costs. Reconcile them against your bill before resuming budgeted calls."
   },
-  "partialCost": "Priced portion only; {count} unpriced / {uncertain} uncertain calls"
+  "partialCost": "Priced portion only; {count} unpriced / {uncertain} uncertain calls",
+  "viewMessage": "View message"
 }

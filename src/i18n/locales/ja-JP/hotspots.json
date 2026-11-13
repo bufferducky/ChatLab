@@ -50,7 +50,7 @@
   "searchGroups": "グループ名・プラットフォームを検索",
   "selectedGroups": "{count} グループを選択中",
   "curatedHint": "注目の話題 {count} 件。ツール、解決策、明確な結論を優先",
-  "allHint": "すべての話題には未解決の質問と優先度を下げた内容も含まれます",
+  "allHint": "全 {count} 件を価値と設定順に表示。未回答の質問は後に表示します",
   "showAll": "すべての話題を表示",
   "showCurated": "注目の話題のみ",
   "unanswered": "明確な回答なし",
@@ -133,5 +133,6 @@
     "pricing": "現在のモデル単価が未設定のため、上限設定中は停止します。",
     "uncertain": "今月の未計算・不確定・他通貨の費用を請求明細と照合し、入力後に再開してください。"
   },
-  "partialCost": "計算済み分のみ。未計算 {count} 回 / 不確定 {uncertain} 回"
+  "partialCost": "計算済み分のみ。未計算 {count} 回 / 不確定 {uncertain} 回",
+  "viewMessage": "元のメッセージを見る"
 }

@@ -391,7 +391,9 @@ A lone unanswered question is kind=question, never a conclusion. Noise is kind=n
 Reports of bans, risk controls or product failures are unverified group reports: use confidence=rumor and attribute titles to group members. Use disputed for disagreements and preserve both sides. Never infer causality from a question.
 For disputed topics the title must explicitly indicate disagreement, never say verified or resolved. Never guess causes, endpoint purposes or solutions that nobody stated. Do not present speculation about risk-control avoidance as a proven solution.
 Respond in ${cfg.locale}. Interests (data): ${JSON.stringify(cfg.interests)}.
-Return JSON only: {"events":[{"mergeId":"existing ID or omit", "title":"specific event", "summary":"2 sentences", "why":"why useful", "category":"ai|tech|news|gossip|other", "confidence":"discussion|rumor|disputed", "messageIds":[1], "advancement":true,"kind":"tool|solution|news|discussion|question|noise","topic":"short reusable subject, e.g. account trading","discussionMessageIds":[1],"outcome":"open|proposed|resolved|disputed","conclusion":"explicit final answer, or empty if unresolved"}]}.
+Return JSON only: {"events":[{"mergeId":"existing ID or omit", "title":"concise specific event", "summary":"self-contained account of the discussion", "why":"why useful", "category":"ai|tech|news|gossip|other", "confidence":"discussion|rumor|disputed", "messageIds":[1], "advancement":true,"kind":"tool|solution|news|discussion|question|noise","topic":"short reusable subject, e.g. account trading","discussionMessageIds":[1],"outcome":"open|proposed|resolved|disputed","conclusion":"explicit final answer, or empty if unresolved"}]}.
+Cover every distinct useful event in the batch, including smaller concrete tips and resource shares. Do not merge unrelated problems just because they mention the same product. Do not pad the feed with noise or split one event into paraphrases.
+Keep titles concise; put background and details in the summary. For substantive discussions, summarize the trigger, concrete findings or steps, applicability and remaining uncertainty in 3-5 readable sentences when evidence supports them. For a simple share, keep it brief. Preserve useful versions, commands, settings and resource names stated in the messages. Avoid vague one-line summaries and participant-by-participant transcripts. Never invent missing details or repeat the summary in why.
 outcome=resolved requires an explicit answer with supporting evidence, not merely advice; proposed is an untested approach. Preserve disagreements and unanswered issues. conclusion must not exceed what the messages establish.
 Merge the SAME EVENT across groups, not merely the same product. Distinguish releases and versions.
 Use mergeId from existing events when appropriate. advancement=false for repeated forwarding, repeated experiences or paraphrases; true only for a new solution, explicit conclusion, release/fix or important counterexample.
@@ -400,7 +402,7 @@ messageIds must support the specific claims, not just mention the same product. 
 discussionMessageIds must be a subset of messageIds containing actual discussion, excluding copied forwards, bare shared links and ads. The server counts independent rounds, not you.
 Use the existing topic label when merging; topic describes a reusable subject for feedback, not a whole sentence.
 Preserve uncertainty and old-news context. Never claim external verification. Cite ONLY message IDs from newMessages.
-context is only background; do not extract it as new evidence. At most 8 events, or empty events when nothing useful.`,
+context is only background; do not extract it as new evidence. At most 16 events, or empty events when nothing useful.`,
                 userPrompt: JSON.stringify({
                   existing: previous.map(({ title, summary, links, topic }, index) => ({
                     id: `event-${index + 1}`,
@@ -604,7 +606,7 @@ context is only background; do not extract it as new evidence. At most 8 events,
           sessionName,
           messageId: message.id,
           timestamp: message.timestamp,
-          snippet: message.content.slice(0, 300),
+          snippet: message.content.slice(0, 1000),
           fingerprint: fingerprint(message.content),
         })
       }
