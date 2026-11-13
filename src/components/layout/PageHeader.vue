@@ -32,7 +32,7 @@ const props = withDefaults(
   <div
     class="relative px-6"
     :class="[
-      props.bordered ? 'border-b border-gray-200/50 dark:border-gray-800/50' : '',
+      props.bordered ? 'border-b border-chat-divider dark:border-gray-800/50' : '',
       props.size === 'compact' ? 'pb-1.5' : 'pb-2',
     ]"
   >
@@ -42,26 +42,27 @@ const props = withDefaults(
 
     <!-- 标题区域 -->
     <div class="flex items-center justify-between">
-      <div class="flex items-center" :class="props.size === 'compact' ? 'gap-2.5' : 'gap-3'">
+      <div class="flex min-w-0 items-center" :class="props.size === 'compact' ? 'gap-2.5' : 'gap-3'">
         <!-- 头像图片（优先显示） -->
         <img
           v-if="avatar"
           :src="avatar"
           :alt="title"
-          class="object-cover"
+          class="shrink-0 object-cover"
           :class="props.size === 'compact' ? 'h-6 w-6 rounded-md' : 'h-10 w-10 rounded-xl'"
         />
         <!-- 可选图标（fallback） -->
         <div
           v-else-if="icon"
-          class="flex items-center justify-center"
+          class="flex shrink-0 items-center justify-center"
           :class="[iconClass, props.size === 'compact' ? 'h-6 w-6 rounded-md' : 'h-10 w-10 rounded-xl']"
         >
           <UIcon :name="icon" class="text-white" :class="props.size === 'compact' ? 'h-3 w-3' : 'h-5 w-5'" />
         </div>
-        <div class="group/title flex items-baseline gap-2">
+        <div class="group/title flex min-w-0 items-baseline gap-2">
           <h1
-            class="font-semibold text-gray-900 dark:text-white"
+            class="truncate font-semibold text-gray-900 dark:text-white"
+            :title="title"
             :class="props.size === 'compact' ? 'text-base' : 'text-lg'"
           >
             {{ title }}
@@ -80,7 +81,7 @@ const props = withDefaults(
       <div class="flex-1 self-stretch mx-4" style="-webkit-app-region: drag" />
 
       <!-- 右侧操作区域 -->
-      <div class="header-actions relative z-[40] flex items-center gap-2">
+      <div class="header-actions relative z-[40] flex shrink-0 items-center gap-2">
         <slot name="actions" />
         <UButton
           v-if="layout.canOpenSidePanel"

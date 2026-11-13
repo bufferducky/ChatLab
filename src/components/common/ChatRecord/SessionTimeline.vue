@@ -136,7 +136,7 @@ const flatList = computed<FlatListItem[]>(() => {
 function getSessionAvatarClass(sessionId: number): string {
   const colors = [
     // 粉色
-    'bg-pink-50 dark:bg-pink-950/30 text-pink-500 dark:text-pink-400',
+    'bg-primary-50 dark:bg-primary-950/30 text-primary-500 dark:text-primary-400',
     // 蓝色
     'bg-blue-50 dark:bg-blue-950/30 text-blue-500 dark:text-blue-400',
     // 绿色
@@ -332,9 +332,16 @@ watch(
   <!-- 折叠状态 -->
   <div
     v-if="isCollapsed"
-    class="flex h-full w-10 flex-col items-center border-r border-gray-200 bg-gray-50 py-2 dark:border-gray-700 dark:bg-page-dark/50"
+    class="flex h-full w-8 shrink-0 flex-col items-center border-r border-chat-divider bg-session-bg py-2 dark:border-gray-700 dark:bg-page-dark/50"
   >
-    <UButton icon="i-heroicons-chevron-right" variant="ghost" size="xs" @click="isCollapsed = false" />
+    <UButton
+      icon="i-heroicons-chevron-right"
+      variant="ghost"
+      size="xs"
+      :aria-label="t('records.timeline.timeline')"
+      :aria-expanded="false"
+      @click="isCollapsed = false"
+    />
     <div class="mt-2 flex flex-1 items-center">
       <span class="vertical-text text-xs text-gray-400">{{ t('records.timeline.timeline') }}</span>
     </div>
@@ -343,10 +350,10 @@ watch(
   <!-- 展开状态 -->
   <div
     v-else
-    class="flex h-full w-56 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-page-dark/50"
+    class="flex h-full w-48 shrink-0 flex-col border-r border-chat-divider bg-session-bg dark:border-gray-700 dark:bg-page-dark/50"
   >
     <!-- 头部 -->
-    <div class="flex items-center justify-between border-b border-gray-200 px-2 py-1.5 dark:border-gray-700">
+    <div class="flex items-center justify-between border-b border-chat-divider px-2 py-1.5 dark:border-gray-700">
       <span class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('records.timeline.timeline') }}</span>
       <div class="flex items-center gap-0.5">
         <UTooltip :text="t('records.batchSummary.title')">
@@ -354,7 +361,14 @@ watch(
             {{ t('records.batchSummary.trigger') }}
           </UButton>
         </UTooltip>
-        <UButton icon="i-heroicons-chevron-left" variant="ghost" size="xs" @click="isCollapsed = true" />
+        <UButton
+          icon="i-heroicons-chevron-left"
+          variant="ghost"
+          size="xs"
+          :aria-label="t('records.timeline.timeline')"
+          :aria-expanded="true"
+          @click="isCollapsed = true"
+        />
       </div>
     </div>
 
@@ -398,7 +412,7 @@ watch(
                 class="group relative flex h-9 w-full items-center gap-2.5 rounded-xl p-1 pl-2.5 text-left transition-all duration-200"
                 :class="[
                   activeSessionId === (flatList[virtualItem.index] as { session: ChatSessionItem }).session.id
-                    ? 'bg-pink-500/5 dark:bg-pink-500/10'
+                    ? 'bg-primary-500/5 dark:bg-primary-500/10'
                     : 'hover:bg-gray-100 dark:hover:bg-gray-800/60',
                 ]"
                 @click="handleSelectSession((flatList[virtualItem.index] as { session: ChatSessionItem }).session)"
@@ -408,8 +422,8 @@ watch(
                   class="absolute left-0 top-1/2 -translate-y-1/2 w-1 rounded-r-md transition-all duration-200"
                   :class="[
                     activeSessionId === (flatList[virtualItem.index] as { session: ChatSessionItem }).session.id
-                      ? 'h-5 bg-pink-500 dark:bg-pink-400 opacity-100'
-                      : 'h-0 bg-pink-500/40 dark:bg-pink-400/40 group-hover:h-3 group-hover:opacity-100 opacity-0',
+                      ? 'h-5 bg-primary-500 dark:bg-primary-400 opacity-100'
+                      : 'h-0 bg-primary-500/40 dark:bg-primary-400/40 group-hover:h-3 group-hover:opacity-100 opacity-0',
                   ]"
                 />
 

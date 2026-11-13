@@ -341,13 +341,13 @@ onUnmounted(() => {
     <div v-else class="min-h-0 flex-1 overflow-y-auto p-3">
       <section
         v-if="run && (activeRun || resumableRun)"
-        class="mb-3 rounded-xl border border-pink-200/70 bg-white p-3 dark:border-pink-900/60 dark:bg-gray-900/50"
+        class="mb-3 rounded-xl border border-primary-200/70 bg-white p-3 dark:border-primary-900/60 dark:bg-gray-900/50"
       >
         <div class="flex items-center justify-between gap-2">
           <div class="flex min-w-0 items-center gap-2 text-xs font-medium text-gray-700 dark:text-gray-200">
             <UIcon
               :name="activeRun ? 'i-heroicons-arrow-path' : 'i-heroicons-pause-circle'"
-              class="h-4 w-4 shrink-0 text-pink-500"
+              class="h-4 w-4 shrink-0 text-primary-500"
               :class="{ 'animate-spin': activeRun }"
             />
             <span class="truncate">{{ t(`records.topics.status.${run.status}`) }}</span>
@@ -355,7 +355,7 @@ onUnmounted(() => {
           <span class="text-[11px] tabular-nums text-gray-400">{{ progressPercent }}%</span>
         </div>
         <UProgress class="mt-2" :value="progressPercent" size="xs" />
-        <p v-if="activeProgressDetail" class="mt-2 text-[11px] text-pink-500 dark:text-pink-300">
+        <p v-if="activeProgressDetail" class="mt-2 text-[11px] text-primary-500 dark:text-primary-300">
           {{ t(activeProgressDetail.key, activeProgressDetail.params) }}
         </p>
         <p class="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
@@ -398,7 +398,7 @@ onUnmounted(() => {
           <span>{{ t('records.topics.stale') }}</span>
         </div>
 
-        <p v-if="day.overview" class="reading-text mb-3 text-gray-700 dark:text-gray-200">
+        <p v-if="day.overview" class="reading-text mb-3 text-gray-600 dark:text-gray-200">
           {{ day.overview }}
         </p>
 
@@ -410,11 +410,11 @@ onUnmounted(() => {
             tabindex="0"
             :aria-pressed="selectedTopicId === topic.id"
             :data-topic-color="topicColorIndex(topic)"
-            class="cursor-pointer rounded-xl border bg-white p-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-pink-400/70 dark:bg-gray-900/50"
+            class="cursor-pointer rounded-lg border bg-white p-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-400/70 dark:bg-gray-900/50"
             :class="
               selectedTopicId === topic.id
                 ? topicColor(topic).selectedCard
-                : 'border-gray-200 hover:border-pink-200 hover:bg-pink-50/20 dark:border-gray-700 dark:hover:border-pink-900 dark:hover:bg-pink-950/10'
+                : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50/20 dark:border-gray-700 dark:hover:border-primary-900 dark:hover:bg-primary-950/10'
             "
             @click="selectTopic(topic)"
             @keydown.enter.prevent="selectTopic(topic)"
@@ -502,8 +502,8 @@ onUnmounted(() => {
       </template>
 
       <div v-else class="flex min-h-64 flex-col items-center justify-center px-4 text-center">
-        <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-pink-50 dark:bg-pink-950/30">
-          <UIcon name="i-heroicons-hashtag" class="h-5 w-5 text-pink-500" />
+        <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary-50 dark:bg-primary-950/30">
+          <UIcon name="i-heroicons-hashtag" class="h-5 w-5 text-primary-500" />
         </div>
         <p class="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('records.topics.emptyTitle') }}</p>
         <p class="mt-1.5 text-xs leading-relaxed text-gray-400">{{ t('records.topics.emptyDescription') }}</p>
@@ -547,16 +547,16 @@ onUnmounted(() => {
               class="flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors"
               :class="
                 selectedRange === option.value
-                  ? 'border-pink-400 bg-pink-50/60 dark:border-pink-700 dark:bg-pink-950/20'
+                  ? 'border-primary-400 bg-primary-50/60 dark:border-primary-700 dark:bg-primary-950/20'
                   : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/50'
               "
               @click="selectedRange = option.value"
             >
               <span
                 class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
-                :class="selectedRange === option.value ? 'border-pink-500' : 'border-gray-300 dark:border-gray-600'"
+                :class="selectedRange === option.value ? 'border-primary-500' : 'border-gray-300 dark:border-gray-600'"
               >
-                <span v-if="selectedRange === option.value" class="h-2 w-2 rounded-full bg-pink-500" />
+                <span v-if="selectedRange === option.value" class="h-2 w-2 rounded-full bg-primary-500" />
               </span>
               <span>
                 <span class="block text-sm font-medium text-gray-800 dark:text-gray-100">{{ option.label }}</span>

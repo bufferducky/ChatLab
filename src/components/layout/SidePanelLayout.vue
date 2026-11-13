@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
       <!-- Keep the inner width stable while the outer shell collapses. -->
       <div class="h-full" :style="{ width: `${width}px` }">
         <div
-          class="relative flex h-full min-h-0 flex-col border-l border-gray-200 bg-white dark:border-white/5 dark:bg-page-dark"
+          class="relative flex h-full min-h-0 flex-col border-l border-chat-divider bg-session-bg dark:border-white/5 dark:bg-chat-dark"
         >
           <div
             class="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none"
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
             <div class="h-full w-px transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500" />
           </div>
 
-          <header class="flex h-12 shrink-0 items-center gap-2 border-b border-gray-100 px-3 dark:border-white/5">
+          <header class="flex h-12 shrink-0 items-center gap-2 border-b border-chat-divider px-3 dark:border-white/5">
             <UButton
               v-if="layout.canReturnSidePanel"
               icon="i-lucide-arrow-left"

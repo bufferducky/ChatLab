@@ -16,7 +16,6 @@ const { showSettings } = storeToRefs(layoutStore)
       icon="i-heroicons-cog-6-tooth"
       :title="t('layout.footer.settings')"
       :active="showSettings"
-      :tooltip="false"
       @click="layoutStore.openSettings()"
     />
   </div>

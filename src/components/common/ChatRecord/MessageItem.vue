@@ -59,43 +59,6 @@ const isOwner = computed(() => {
   return props.message.senderPlatformId === ownerId
 })
 
-// 基于发送者名称生成一致的颜色索引
-const colorIndex = computed(() => {
-  const name = props.message.senderName || ''
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return Math.abs(hash) % 16
-})
-
-// 现代优雅配色方案（16 种颜色）
-// 参考 Linear, Notion 等现代产品的配色风格
-const colorPalette = [
-  { avatar: 'bg-rose-400 dark:bg-rose-500', name: 'text-rose-600 dark:text-rose-400' },
-  { avatar: 'bg-pink-400 dark:bg-pink-500', name: 'text-pink-600 dark:text-pink-400' },
-  { avatar: 'bg-fuchsia-400 dark:bg-fuchsia-500', name: 'text-fuchsia-600 dark:text-fuchsia-400' },
-  { avatar: 'bg-purple-400 dark:bg-purple-500', name: 'text-purple-600 dark:text-purple-400' },
-  { avatar: 'bg-violet-400 dark:bg-violet-500', name: 'text-violet-600 dark:text-violet-400' },
-  { avatar: 'bg-indigo-400 dark:bg-indigo-500', name: 'text-indigo-600 dark:text-indigo-400' },
-  { avatar: 'bg-blue-400 dark:bg-blue-500', name: 'text-blue-600 dark:text-blue-400' },
-  { avatar: 'bg-sky-400 dark:bg-sky-500', name: 'text-sky-600 dark:text-sky-400' },
-  { avatar: 'bg-cyan-400 dark:bg-cyan-500', name: 'text-cyan-600 dark:text-cyan-400' },
-  { avatar: 'bg-teal-400 dark:bg-teal-500', name: 'text-teal-600 dark:text-teal-400' },
-  { avatar: 'bg-emerald-400 dark:bg-emerald-500', name: 'text-emerald-600 dark:text-emerald-400' },
-  { avatar: 'bg-green-400 dark:bg-green-500', name: 'text-green-600 dark:text-green-400' },
-  { avatar: 'bg-lime-500 dark:bg-lime-600', name: 'text-lime-600 dark:text-lime-400' },
-  { avatar: 'bg-amber-400 dark:bg-amber-500', name: 'text-amber-600 dark:text-amber-400' },
-  { avatar: 'bg-orange-400 dark:bg-orange-500', name: 'text-orange-600 dark:text-orange-400' },
-  { avatar: 'bg-red-400 dark:bg-red-500', name: 'text-red-600 dark:text-red-400' },
-]
-
-const currentColor = computed(() => colorPalette[colorIndex.value])
-const avatarColor = computed(() => currentColor.value.avatar)
-const nameColor = computed(() => currentColor.value.name)
-
-// 气泡颜色
-const bubbleColor = 'bg-gray-100/80 dark:bg-gray-800/80'
 const targetColor = computed(() =>
   props.topicColorIndex === undefined
     ? 'bg-primary-500/5 dark:bg-primary-500/10'
@@ -196,16 +159,12 @@ function highlightContent(content: string): string {
 </script>
 
 <template>
-  <div
-    class="group px-4 py-2.5 transition-all duration-300"
-    :class="[isTarget ? targetColor : 'hover:bg-gray-50/40 dark:hover:bg-gray-900/10']"
-  >
+  <div class="group px-4 py-1.5 transition-colors" :class="[isTarget ? targetColor : '']">
     <!-- Owner 消息显示在右侧 -->
-    <div class="flex gap-3" :class="isOwner ? 'flex-row-reverse' : ''">
+    <div class="flex gap-2.5" :class="isOwner ? 'flex-row-reverse' : ''">
       <!-- 头像 -->
       <div
-        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-white overflow-hidden"
-        :class="message.senderAvatar ? '' : avatarColor"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-300 text-xs font-medium text-gray-700 overflow-hidden dark:bg-gray-600 dark:text-gray-100"
       >
         <img
           v-if="message.senderAvatar"
@@ -219,23 +178,22 @@ function highlightContent(content: string): string {
       <!-- 消息内容区 -->
       <div class="min-w-0 flex-1" :class="isOwner ? 'flex flex-col items-end' : ''">
         <!-- 发送者名称 -->
-        <div class="mb-1 flex items-center gap-2" :class="isOwner ? 'flex-row-reverse' : ''">
-          <span class="text-sm font-medium" :class="nameColor">
+        <div class="mb-0.5 flex items-center gap-2" :class="isOwner ? 'flex-row-reverse' : ''">
+          <span class="text-xs text-chat-muted dark:text-chat-muted-dark">
             {{ displayName }}
           </span>
         </div>
 
         <!-- 气泡和上下文按钮 -->
-        <!-- max-w-[calc(100%-48px)] = 100% - 头像宽度(36px) - gap(12px) -->
-        <div class="flex min-w-0 max-w-[calc(100%-68px)] items-start gap-1" :class="isOwner ? 'flex-row-reverse' : ''">
+        <div class="flex min-w-0 max-w-[min(88%,46rem)] items-start gap-1" :class="isOwner ? 'flex-row-reverse' : ''">
           <div
-            class="relative min-w-0 max-w-full rounded-2xl border border-gray-100 px-3.5 py-2.5 transition-all duration-300 dark:border-gray-800/40"
-            :class="bubbleColor"
+            class="relative min-w-0 max-w-full rounded-xl px-3 py-2"
+            :class="isOwner ? 'bg-chat-owner dark:bg-chat-owner-dark' : 'bg-chat-bubble dark:bg-chat-bubble-dark'"
           >
             <!-- 回复引用样式 -->
             <div
               v-if="message.replyToMessageId"
-              class="mb-2 border-l-2 border-pink-400 dark:border-pink-500 pl-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-500/5 dark:bg-white/5 rounded-r"
+              class="mb-2 border-l-2 border-primary-400 dark:border-primary-500 pl-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-500/5 dark:bg-white/5 rounded-r"
             >
               <span class="font-medium text-gray-600 dark:text-gray-300">{{ t('records.messageItem.replyTo') }}</span>
               <span v-if="message.replyToSenderName" class="ml-1 font-semibold text-gray-700 dark:text-gray-200">
@@ -257,7 +215,7 @@ function highlightContent(content: string): string {
             />
             <p
               v-if="imageMessageContent"
-              class="reading-text chat-record-message-content whitespace-pre-wrap break-all text-gray-700 dark:text-gray-200"
+              class="reading-text chat-record-message-content whitespace-pre-wrap break-all text-chat-text dark:text-gray-100"
               :class="{ 'mt-2': imageCaption !== null }"
               v-html="highlightContent(imageMessageContent)"
             />
@@ -300,7 +258,7 @@ function highlightContent(content: string): string {
           <!-- 上下文查看按钮 -->
           <button
             v-if="isFiltered"
-            class="mt-1 flex h-6 w-6 items-center justify-center rounded-lg opacity-0 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-pink-500 dark:hover:text-pink-400 active:scale-95 group-hover:opacity-100 cursor-pointer"
+            class="mt-1 flex h-6 w-6 items-center justify-center rounded-lg opacity-0 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-primary-500 dark:hover:text-primary-400 active:scale-95 group-hover:opacity-100 focus-visible:opacity-100 cursor-pointer"
             :title="t('records.messageItem.viewContext')"
             @click="$emit('view-context', message.id)"
           >
