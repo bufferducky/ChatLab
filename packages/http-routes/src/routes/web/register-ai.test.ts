@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
 import type { PathProvider } from '@openchatlab/core'
@@ -64,8 +67,14 @@ test('registerAiRoutes identifies each missing required dependency', () => {
 
 test('registerAiRoutes keeps static and graceful fallback routes without AI managers', async (t) => {
   const app = Fastify()
-  t.after(() => app.close())
-  registerAiRoutes(app, baseContext())
+  const dataDir = mkdtempSync(join(process.env.CHATLAB_TEST_TMPDIR ?? tmpdir(), 'chatlab-ai-route-'))
+  t.after(async () => {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+  const context = baseContext()
+  context.pathProvider = { getUserDataDir: () => dataDir } as PathProvider
+  registerAiRoutes(app, context)
   await app.ready()
 
   const catalog = await app.inject({ method: 'GET', url: '/_web/ai/tools/catalog' })
