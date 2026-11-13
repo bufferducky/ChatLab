@@ -32,7 +32,7 @@ export function initSync(
   dbManager: DatabaseManager,
   pathProvider: PathProvider,
   serverInfo: { port: number; host: string; socket?: string; token: string }
-): void {
+): AutomationRouteContext {
   const settingsDir = pathProvider.getSettingsDir()
 
   dsManager = new DataSourceManager(settingsDir, syncLogger)
@@ -59,22 +59,22 @@ export function initSync(
     },
   })
 
-  registerAutomationRoutes(server, {
-    automation: {
-      dsManager,
-      pullEngine,
-      serverInfo,
-      deleteSessionData: (sessionId) => dbManager.deleteSessionDatabaseFiles(sessionId),
-      reloadTimer,
-      stopTimer,
-    },
-  })
+  const automation: AutomationRouteContext = {
+    dsManager,
+    pullEngine,
+    serverInfo,
+    deleteSessionData: (sessionId) => dbManager.deleteSessionDatabaseFiles(sessionId),
+    reloadTimer,
+    stopTimer,
+  }
+  registerAutomationRoutes(server, { automation })
 
   initScheduler({
     dsManager,
     pullEngine,
     logger: syncLogger,
   })
+  return automation
 }
 
 export function cleanupSync(): void {

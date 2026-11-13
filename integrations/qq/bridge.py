@@ -280,7 +280,10 @@ def make_server(cache, config, images=None):
                         return self.reply(404, {'error': 'Images unavailable'})
                     sid, mid = unquote(parts[3]), unquote(parts[5])
                     index = int(parts[7]) if len(parts) == 8 else None
-                    return self.reply(200, images.resolve(sid, mid, index))
+                    size = query.get('size', ['preview'])[0]
+                    if size not in ('preview', 'original'):
+                        raise ValueError('Invalid image size')
+                    return self.reply(200, images.resolve(sid, mid, index, size))
                 if len(parts) == 5 and parts[:3] == ['api', 'v1', 'sessions'] and parts[4] == 'messages':
                     since, offset = int(query.get('since', ['0'])[0]), int(query.get('offset', ['0'])[0])
                     if since < 0 or offset < 0:

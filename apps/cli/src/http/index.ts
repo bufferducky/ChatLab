@@ -220,6 +220,8 @@ export async function startHttpServer(options?: HttpServerOptions): Promise<{
     semanticIndexService = undefined
   }
 
+  const automation = initSync(server, dbManager, pathProvider, { port, host, socket, token })
+
   registerWebRoutes(server, dbManager, {
     pathProvider,
     nativeBinding,
@@ -228,6 +230,7 @@ export async function startHttpServer(options?: HttpServerOptions): Promise<{
     globalInsightService,
     preferencesManager,
     semanticIndexService,
+    automation,
     aiContext: {
       aiDataDir,
       aiChatManager,
@@ -246,8 +249,6 @@ export async function startHttpServer(options?: HttpServerOptions): Promise<{
       }),
     },
   })
-
-  initSync(server, dbManager, pathProvider, { port, host, socket, token })
 
   if (options?.webRoot && fs.existsSync(options.webRoot)) {
     // 注册反向代理：将 /_proxy/chatlab.fun/* 转发至 https://chatlab.fun，

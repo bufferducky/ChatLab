@@ -1,6 +1,7 @@
 """Read images from the selected QQ account's existing local cache."""
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -60,7 +61,7 @@ class QQImages:
             ],
         }
 
-    def resolve(self, sid, mid, index=None):
+    def resolve(self, sid, mid, index=None, size="original"):
         item = self.metadata(sid, mid)
         attachments = [
             a for a in item.get("attachments", []) if a.get("kind") == "image"
@@ -116,10 +117,40 @@ class QQImages:
             candidates = [
                 path for path in self.inventory if path.stem.lower() in hashes
             ]
-            # A filename alone is not a unique identity. Never show a guessed image.
-            if len(candidates) != 1:
-                raise KeyError("Image not cached or ambiguous")
-            return self.read(candidates[0], roots)
+            thumbnails = (
+                [
+                    path
+                    for path in self.inventory
+                    if path.parent.name == "Thumb"
+                    and re.fullmatch(r"[a-fA-F0-9]{32}_\d{1,5}", path.stem)
+                    and path.stem[:32].lower() in hashes
+                ]
+                if size == "preview"
+                else []
+            )
+        # QQ keeps identical originals in Pic and Emoji. Verify the content hash
+        # instead of rejecting duplicate copies or trusting an arbitrary filename.
+        for path in candidates:
+            try:
+                data = self.read(path, roots)
+            except (KeyError, FileNotFoundError):
+                continue
+            # A unique cache path keeps the existing lookup behavior: QQ may
+            # re-encode a cached original without renaming its message hash.
+            if len(candidates) == 1 or hashlib.md5(data).hexdigest() in hashes:
+                return data
+        # QQ's Thumb/<MD5>_<size> files belong to that original, but have their
+        # own bytes. They may serve previews only, never requests for originals.
+        for path in sorted(
+            thumbnails,
+            key=lambda p: int(p.stem.rsplit("_", 1)[1]),
+            reverse=True,
+        ):
+            try:
+                return self.read(path, roots)
+            except (KeyError, FileNotFoundError):
+                continue
+        raise KeyError("Image not cached")
 
     @staticmethod
     def read(path, roots):

@@ -82,6 +82,7 @@ export function registerWebRoutes(
     aiContext?: AiContextOptions
     /** 由 server 入口注入的共享语义索引运行时；传入时由调用方管理生命周期 */
     semanticIndexService?: SemanticIndexRuntime
+    automation?: HttpRouteContext['automation']
   }
 ): void {
   const adapter = createDatabaseManagerAdapter(dbManager)
@@ -141,6 +142,7 @@ export function registerWebRoutes(
       nativeBinding: options?.nativeBinding,
       bundledNlpDictDir: process.env.CHATLAB_NLP_DICT_DIR?.trim() || undefined,
       semanticIndexService,
+      automation: options?.automation,
       contactsService: options?.contactsService,
       globalInsightService: options?.globalInsightService,
       preferencesManager: options?.preferencesManager,
