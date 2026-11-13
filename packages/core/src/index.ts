@@ -81,6 +81,7 @@ export {
   computePrivateRegularity,
   rankPercentiles,
   queryMessages,
+  getMessageImageReference,
   searchMessagesLike,
   searchMessagesByKeywords,
   getRecentMessages,

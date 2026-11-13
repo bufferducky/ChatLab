@@ -240,27 +240,28 @@
 
 /* 聊天正文的阅读字号，避免全局覆盖 prose-sm / text-xs */
 .ai-chat-prose {
-  font-size: 16px;
-  line-height: 28px;
+  font-size: calc(16px + var(--reading-size-adjustment));
+  font-weight: var(--reading-font-weight);
+  line-height: 1.75;
 }
 
 .ai-chat-prose h1 {
-  font-size: 24px;
+  font-size: 1.5em;
   font-weight: 700;
   margin: 24px 0 12px;
-  line-height: 34px;
+  line-height: 1.4;
 }
 
 .ai-chat-prose h2 {
-  font-size: 22px;
+  font-size: 1.375em;
   font-weight: 700;
   margin: 24px 0 12px;
-  line-height: 32px;
+  line-height: 1.45;
 }
 
 .ai-chat-prose h3 {
-  font-size: 20px;
+  font-size: 1.25em;
   font-weight: 700;
   margin: 24px 0 12px;
-  line-height: 30px;
+  line-height: 1.5;
 }

@@ -33,7 +33,8 @@ withDefaults(
 const layoutStore = useLayoutStore()
 const settingsStore = useSettingsStore()
 const { toolsPanelPosition } = storeToRefs(layoutStore)
-const { locale, defaultSessionTab, insightCardTheme, debugMode } = storeToRefs(settingsStore)
+const { locale, defaultSessionTab, insightCardTheme, readingFontSize, readingFontBold, debugMode } =
+  storeToRefs(settingsStore)
 
 // Auto Launch
 const openAtLogin = ref(false)
@@ -119,6 +120,12 @@ const colorMode = useColorMode({
   emitAuto: true,
   initialValue: 'light',
 })
+
+const readingFontSizeOptions = computed(() => [
+  { label: t('settings.basic.appearance.readingSmall'), value: 'small' },
+  { label: t('settings.basic.appearance.readingStandard'), value: 'standard' },
+  { label: t('settings.basic.appearance.readingLarge'), value: 'large' },
+])
 
 // Color mode options
 const colorModeOptions = computed(() => [
@@ -262,6 +269,41 @@ const desktopCloseBehaviorOptions = computed(() => [
             />
           </div>
         </template>
+        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+        <div class="flex items-center justify-between gap-3 p-4">
+          <div class="min-w-0 flex-1">
+            <label for="reading-font-size" class="text-sm font-medium text-gray-900 dark:text-white">
+              {{ t('settings.basic.appearance.readingFontSize') }}
+            </label>
+            <p id="reading-font-size-description" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('settings.basic.appearance.readingFontSizeDesc') }}
+            </p>
+          </div>
+          <USelect
+            id="reading-font-size"
+            v-model="readingFontSize"
+            :items="readingFontSizeOptions"
+            aria-describedby="reading-font-size-description"
+            class="w-28 shrink-0"
+          />
+        </div>
+        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+        <div class="flex items-center justify-between gap-3 p-4">
+          <label for="reading-font-bold" class="text-sm font-medium text-gray-900 dark:text-white">
+            {{ t('settings.basic.appearance.readingFontBold') }}
+          </label>
+          <USwitch id="reading-font-bold" v-model="readingFontBold" />
+        </div>
+        <div class="px-4 pb-4">
+          <div class="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900/50">
+            <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('settings.basic.appearance.readingPreview') }}
+            </p>
+            <p class="reading-text text-gray-700 dark:text-gray-200">
+              {{ t('settings.basic.appearance.readingPreviewText') }}
+            </p>
+          </div>
+        </div>
         <div class="border-t border-gray-200 dark:border-gray-700"></div>
         <div class="flex items-center justify-between p-4">
           <div class="flex-1 pr-4">

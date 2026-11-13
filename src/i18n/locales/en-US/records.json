@@ -137,5 +137,13 @@
     "replyTo": "Reply to",
     "expandMessyContent": "Show full content",
     "collapseMessyContent": "Collapse"
+  },
+  "images": {
+    "image": "Image",
+    "loading": "Loading image…",
+    "unavailable": "Image unavailable",
+    "viewOriginal": "View original",
+    "loadingOriginal": "Loading original…",
+    "originalUnavailable": "Original unavailable. The preview is still available."
   }
 }

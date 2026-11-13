@@ -91,3 +91,28 @@
 .app-region-no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* Reading preferences affect content only, including teleported panels. */
+:root {
+  --reading-size-adjustment: 0px;
+  --reading-font-weight: 400;
+}
+
+:root[data-reading-size='small'] {
+  --reading-size-adjustment: -1px;
+}
+
+:root[data-reading-size='large'] {
+  --reading-size-adjustment: 2px;
+}
+
+:root[data-reading-bold='true'] {
+  --reading-font-weight: 500;
+}
+
+.reading-text {
+  font-size: calc(14px + var(--reading-size-adjustment));
+  font-weight: var(--reading-font-weight);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}

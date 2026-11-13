@@ -10,6 +10,8 @@ import { analyzeMessyContent } from './messy-content'
 import type { ChatRecordMessage } from './types'
 import { chatTopicColorStyle } from './topic-highlight'
 import { useSessionStore } from '@/stores/session'
+import { IS_WEB_WASM } from '@/utils/platform'
+import MessageImages from './MessageImages.vue'
 
 const { t } = useI18n()
 
@@ -31,6 +33,24 @@ const emit = defineEmits<{
 }>()
 
 const sessionStore = useSessionStore()
+const imageCaption = ref<string | null>(null)
+const canLoadImages = computed(
+  () =>
+    !IS_WEB_WASM &&
+    !!sessionStore.currentSessionId &&
+    ['qq', 'telegram'].includes(sessionStore.currentSession?.platform ?? '') &&
+    [1, 5, 99].includes(props.message.type)
+)
+const imageMessageContent = computed(() => {
+  if (!canLoadImages.value) return visibleMessageContent.value
+  if (imageCaption.value !== null) return imageCaption.value
+  if (props.message.type === 1) {
+    return sessionStore.currentSession?.platform === 'telegram'
+      ? props.message.content.replace(/^\[(?:photo|animation)\]\s*/, '')
+      : ''
+  }
+  return visibleMessageContent.value
+})
 
 // 判断当前消息是否是 Owner 发送的
 const isOwner = computed(() => {
@@ -93,9 +113,10 @@ const visibleMessageContent = computed(() => {
 })
 
 watch(
-  () => [props.message.id, props.message.content],
+  () => [props.message.id, props.message.content, sessionStore.currentSessionId],
   () => {
     showFullMessyContent.value = false
+    imageCaption.value = null
   }
 )
 
@@ -227,12 +248,21 @@ function highlightContent(content: string): string {
                 {{ message.replyToContent }}
               </p>
             </div>
+            <MessageImages
+              v-if="canLoadImages && sessionStore.currentSessionId"
+              :session-id="sessionStore.currentSessionId"
+              :message-id="message.id"
+              :show-unavailable="message.type !== 99"
+              @caption="imageCaption = $event"
+            />
             <p
-              class="chat-record-message-content whitespace-pre-wrap break-all text-sm text-gray-700 dark:text-gray-200"
-              v-html="highlightContent(visibleMessageContent)"
+              v-if="imageMessageContent"
+              class="reading-text chat-record-message-content whitespace-pre-wrap break-all text-gray-700 dark:text-gray-200"
+              :class="{ 'mt-2': imageCaption !== null }"
+              v-html="highlightContent(imageMessageContent)"
             />
             <ul
-              v-if="contentAnalysis.linkUrls.length"
+              v-if="imageCaption === null && contentAnalysis.linkUrls.length"
               class="chat-record-message-content mt-2 min-w-0 max-w-full list-disc space-y-1 pl-4 text-xs text-primary-600 dark:text-primary-400"
             >
               <li v-for="linkUrl in contentAnalysis.linkUrls" :key="linkUrl" class="min-w-0">
@@ -248,7 +278,7 @@ function highlightContent(content: string): string {
               </li>
             </ul>
             <button
-              v-if="contentAnalysis.shouldCollapse"
+              v-if="imageCaption === null && contentAnalysis.shouldCollapse"
               type="button"
               class="mt-2 inline-flex items-center gap-1 text-xs font-medium text-gray-500 transition-colors select-none hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer"
               @click="showFullMessyContent = !showFullMessyContent"

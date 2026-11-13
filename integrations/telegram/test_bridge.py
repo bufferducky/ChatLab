@@ -8,12 +8,12 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from bridge import Cache, convert_message, make_server, refresh
-from telethon import types
+from bridge import Cache, convert_message, make_client, make_server, refresh
+from telethon import TelegramClient, errors, functions, types
 
 
 def payload(mid, stamp=100):
@@ -171,6 +171,197 @@ class ConversionTests(unittest.TestCase):
         )
         value = convert_message(photo)
         self.assertEqual((value["type"], value["content"]), (1, "[photo] caption"))
+
+
+class RequestControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_telethon_rpc_retries_after_the_server_wait(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = make_client(directory, {"apiId": 1, "apiHash": "test"})
+            clock = SimpleNamespace(now=1000.0)
+            request = functions.help.GetConfigRequest()
+            response = types.User(id=42)
+            sent_at = []
+
+            async def sleep(seconds):
+                clock.now += seconds
+
+            def send(request, **kwargs):
+                sent_at.append(clock.now)
+                result = asyncio.get_running_loop().create_future()
+                if len(sent_at) == 1:
+                    result.set_exception(errors.FloodWaitError(request, capture=6))
+                else:
+                    result.set_result(response)
+                return result
+
+            virtual_time = SimpleNamespace(
+                time=lambda: clock.now, monotonic=lambda: clock.now
+            )
+            with (
+                patch("bridge.time", virtual_time),
+                patch("telethon.client.users.time", virtual_time),
+                patch("bridge.asyncio.sleep", side_effect=sleep),
+            ):
+                result = await client._call(SimpleNamespace(send=send), request)
+            self.assertIs(result, response)
+            self.assertEqual(sent_at, [1000, 1006])
+
+    async def test_requests_across_chats_share_the_configured_interval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = make_client(directory, {"apiId": 1, "apiHash": "test"})
+            clock = SimpleNamespace(now=0.0)
+            starts = []
+
+            async def sleep(seconds):
+                clock.now += seconds
+
+            async def call(*args, **kwargs):
+                starts.append(clock.now)
+                return "ok"
+
+            with (
+                patch("bridge.time", SimpleNamespace(monotonic=lambda: clock.now)),
+                patch("bridge.asyncio.sleep", side_effect=sleep),
+                patch.object(TelegramClient, "_call", side_effect=call),
+            ):
+                await asyncio.gather(
+                    client._call(None, "chat-one"),
+                    client._call(None, "chat-two"),
+                    client._call(None, "next-page"),
+                )
+            self.assertEqual(starts, [0, 3, 6])
+
+    async def test_flood_wait_continues_the_current_batch_and_later_chats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            config = {"apiId": 1, "apiHash": "test", "allDialogs": True}
+            client = make_client(directory, config)
+            clock = SimpleNamespace(now=0.0)
+            attempts = []
+            waits = []
+            stamp = datetime(2025, 1, 1, tzinfo=UTC)
+
+            async def sleep(seconds):
+                waits.append(seconds)
+                clock.now += seconds
+
+            async def call(sender, request, **kwargs):
+                attempts.append((request, clock.now))
+                if len(attempts) == 2:
+                    raise errors.FloodWaitError(request=None, capture=6)
+
+            async def dialogs():
+                for peer in (1, 2):
+                    yield SimpleNamespace(
+                        id=peer, name=str(peer), is_user=True, entity=peer
+                    )
+
+            async def messages(peer, **kwargs):
+                for mid in (1, 2):
+                    await client._call(None, (peer, mid))
+                    yield types.Message(
+                        id=mid,
+                        peer_id=types.PeerUser(peer),
+                        from_id=types.PeerUser(peer),
+                        date=stamp,
+                        message="synthetic",
+                    )
+
+            client.connect = AsyncMock()
+            client.is_user_authorized = AsyncMock(return_value=True)
+            client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+            client.iter_dialogs = dialogs
+            client.iter_messages = messages
+            with (
+                patch(
+                    "bridge.time",
+                    SimpleNamespace(
+                        monotonic=lambda: clock.now,
+                        time=lambda: stamp.timestamp() + clock.now,
+                    ),
+                ),
+                patch("bridge.asyncio.sleep", side_effect=sleep),
+                patch.object(TelegramClient, "_call", side_effect=call),
+            ):
+                result = await refresh(directory, config, cache, client)
+            self.assertEqual(result["changedMessages"], 4)
+            self.assertEqual(result["historyComplete"], 2)
+            self.assertEqual(result["error"], "")
+            self.assertEqual(cache.status()["retryAfter"], 0)
+            self.assertEqual(attempts[1][0], attempts[2][0])
+            self.assertGreaterEqual(attempts[2][1] - attempts[1][1], 6)
+            self.assertIn(6, waits)
+            for peer in (1, 2):
+                sid = f"telegram:42:{peer}"
+                self.assertEqual(cache.cursor(sid), 2)
+                self.assertEqual(
+                    [m["platformMessageId"] for m in cache.messages(sid)["messages"]],
+                    ["1", "2"],
+                )
+
+    async def test_nested_entity_lookup_can_complete_without_locking_itself(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = make_client(directory, {"apiId": 1, "apiHash": "test"})
+            clock = SimpleNamespace(now=0.0)
+
+            async def sleep(seconds):
+                clock.now += seconds
+
+            async def call(sender, request):
+                if request == "history":
+                    return await client._call(sender, "resolve-peer")
+                return request
+
+            with (
+                patch("bridge.time", SimpleNamespace(monotonic=lambda: clock.now)),
+                patch("bridge.asyncio.sleep", side_effect=sleep),
+                patch.object(TelegramClient, "_call", side_effect=call),
+            ):
+                result = await asyncio.wait_for(client._call(None, "history"), 1)
+            self.assertEqual(result, "resolve-peer")
+            self.assertEqual(clock.now, 3)
+
+    async def test_stopping_during_flood_wait_preserves_the_retry_deadline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = make_client(directory, {"apiId": 1, "apiHash": "test"})
+
+            async def stop(seconds):
+                raise asyncio.CancelledError()
+
+            with (
+                patch("bridge.asyncio.sleep", side_effect=stop),
+                patch.object(
+                    TelegramClient,
+                    "_call",
+                    side_effect=errors.FloodWaitError(request=None, capture=600),
+                ),
+                self.assertRaises(asyncio.CancelledError),
+            ):
+                await client._call(None, "history")
+            state = Cache(directory).status()
+            self.assertEqual(state["error"], "")
+            self.assertGreaterEqual(
+                state["retryAfter"], int(datetime.now(UTC).timestamp()) + 598
+            )
+            clock = SimpleNamespace(now=datetime.now(UTC).timestamp())
+            resumed_at = clock.now
+
+            async def sleep(seconds):
+                clock.now += seconds
+
+            with (
+                patch(
+                    "bridge.time",
+                    SimpleNamespace(
+                        time=lambda: clock.now, monotonic=lambda: clock.now
+                    ),
+                ),
+                patch("bridge.asyncio.sleep", side_effect=sleep),
+                patch.object(TelegramClient, "_call", return_value="resumed"),
+            ):
+                restarted = make_client(directory, {"apiId": 1, "apiHash": "test"})
+                self.assertEqual(await restarted._call(None, "history"), "resumed")
+            self.assertGreaterEqual(clock.now - resumed_at, 598)
 
 
 class CollectionTests(unittest.TestCase):

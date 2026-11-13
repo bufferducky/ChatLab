@@ -50,9 +50,49 @@ def collector_lock(root):
 
 
 def make_client(root, config):
-    from telethon import TelegramClient
+    from telethon import TelegramClient, errors
 
-    return TelegramClient(
+    cache = Cache(root)
+
+    class PacedClient(TelegramClient):
+        """Pace RPCs across iterators and resume the same RPC after FLOOD_WAIT."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._request_gate = asyncio.Lock()
+            remaining = max(0, cache.status()["retryAfter"] - time.time())
+            self._next_request_at = time.monotonic() + remaining if remaining else 0
+
+        async def _call(self, *args, **kwargs):
+            while True:
+                # Release the gate before Telethon resolves entities: resolution
+                # may issue a nested RPC on this client.
+                async with self._request_gate:
+                    while (delay := self._next_request_at - time.monotonic()) > 0:
+                        await asyncio.sleep(delay)
+                    self._next_request_at = time.monotonic() + max(
+                        0, config.get("requestWaitSeconds", 3)
+                    )
+                try:
+                    return await super()._call(*args, **kwargs)
+                except errors.FloodWaitError as error:
+                    seconds = max(1, error.seconds)
+                    self._next_request_at = max(
+                        self._next_request_at, time.monotonic() + seconds
+                    )
+                    cache.record_rate_limit(seconds)
+                    print(
+                        json.dumps(
+                            {
+                                "event": "telegramFloodWait",
+                                "waitSeconds": seconds,
+                                "requestType": type(error.request).__name__,
+                            }
+                        ),
+                        flush=True,
+                    )
+
+    return PacedClient(
         str(Path(root) / "telegram"),
         config["apiId"],
         config["apiHash"],
@@ -244,6 +284,15 @@ class Cache:
                 (str(int(time.time())),),
             )
 
+    def record_rate_limit(self, seconds):
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO state VALUES('retryAfter',?)
+                ON CONFLICT(key) DO UPDATE SET value=MAX(
+                    CAST(state.value AS INTEGER), CAST(excluded.value AS INTEGER))""",
+                (str(int(time.time()) + seconds),),
+            )
+
     def fail(self, error):
         with self.connect() as db:
             db.execute(
@@ -397,7 +446,7 @@ async def discover(root, config):
         await client.disconnect()
 
 
-async def refresh(root, config, cache):
+async def refresh(root, config, cache, shared_client=None):
     from telethon import utils
 
     selected = config.get("selectedPeers", [])
@@ -406,7 +455,7 @@ async def refresh(root, config, cache):
     if cache.status()["retryAfter"] > time.time():
         return {"deferred": True, **cache.status()}
     cache.record_attempt()
-    client = make_client(root, config)
+    client = shared_client or make_client(root, config)
     changed = 0
     history_since = config.get("historySince", int(time.time()) - 7 * 86400)
     try:
@@ -466,10 +515,11 @@ async def refresh(root, config, cache):
         cache.finish()
         return {"changedMessages": changed, **cache.status()}
     finally:
-        await client.disconnect()
+        if shared_client is None:
+            await client.disconnect()
 
 
-def make_server(cache, config):
+def make_server(cache, config, images=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -508,6 +558,27 @@ def make_server(cache, config):
                     )
                 parts = path.path.strip("/").split("/")
                 if (
+                    len(parts) in (7, 8)
+                    and parts[:3] == ["api", "v1", "sessions"]
+                    and parts[4] == "messages"
+                    and parts[6] == "images"
+                ):
+                    if images is None:
+                        return self.reply(404, {"error": "Images unavailable"})
+                    size = query.get("size", ["preview"])[0]
+                    if size not in ("preview", "original"):
+                        raise ValueError("Invalid image size")
+                    if len(parts) == 8 and parts[7] != "0":
+                        raise KeyError("Unknown image")
+                    return self.reply(
+                        200,
+                        images.request(
+                            unquote(parts[3]),
+                            unquote(parts[5]),
+                            size if len(parts) == 8 else None,
+                        ),
+                    )
+                if (
                     len(parts) == 5
                     and parts[:3] == ["api", "v1", "sessions"]
                     and parts[4] == "messages"
@@ -526,11 +597,26 @@ def make_server(cache, config):
                 return self.reply(404, {"error": "Unknown conversation"})
             except ValueError:
                 return self.reply(400, {"error": "Invalid request"})
+            except Exception as error:  # noqa: BLE001 -- Never expose upstream exception details.
+                from telethon.errors import FloodWaitError
+
+                if isinstance(error, FloodWaitError):
+                    cache.fail(error)
+                return self.reply(503, {"error": "Image source unavailable"})
 
         def reply(self, status, value):
-            body = json.dumps(value, ensure_ascii=False).encode()
+            body = (
+                value
+                if isinstance(value, bytes)
+                else json.dumps(value, ensure_ascii=False).encode()
+            )
             self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header(
+                "Content-Type",
+                "application/octet-stream"
+                if isinstance(value, bytes)
+                else "application/json; charset=utf-8",
+            )
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -577,10 +663,20 @@ def main():
             print(json.dumps({"selectedConversations": len(config["selectedPeers"])}))
             return
 
+        worker = None
+        if args.command == "serve":
+            from image_media import TelegramWorker
+
+            worker = TelegramWorker(lambda: make_client(root, config), cache)
+
         def collect():
             started = time.monotonic()
             try:
-                result = asyncio.run(refresh(root, config, cache))
+                result = (
+                    worker.run(refresh(root, config, cache, worker.client))
+                    if worker
+                    else asyncio.run(refresh(root, config, cache))
+                )
                 print(
                     json.dumps(
                         {
@@ -602,7 +698,7 @@ def main():
         if args.command == "refresh":
             raise SystemExit(0 if collect() else 1)
         stop = threading.Event()
-        server = make_server(cache, config)
+        server = make_server(cache, config, worker.images)
 
         def loop():
             # A service restart must not cause another Telegram scan inside the interval.
@@ -630,6 +726,7 @@ def main():
         finally:
             stop.set()
             server.server_close()
+            worker.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import 'dayjs/locale/zh-tw'
@@ -37,6 +37,19 @@ export const useSettingsStore = defineStore(
     const defaultSessionTab = ref<'insights' | 'ai-chat' | 'memory'>('insights')
 
     const insightCardTheme = ref<InsightCardThemeId>(DEFAULT_INSIGHT_CARD_THEME)
+
+    const readingFontSize = ref<'small' | 'standard' | 'large'>('standard')
+    const readingFontBold = ref(false)
+
+    watch(
+      [readingFontSize, readingFontBold],
+      ([size, bold]) => {
+        if (typeof document === 'undefined') return
+        document.documentElement.dataset.readingSize = size
+        document.documentElement.dataset.readingBold = String(bold)
+      },
+      { immediate: true }
+    )
 
     const debugMode = ref(false)
 
@@ -114,6 +127,8 @@ export const useSettingsStore = defineStore(
       initLocale,
       defaultSessionTab,
       insightCardTheme,
+      readingFontSize,
+      readingFontBold,
       debugMode,
       setDebugMode,
       aiPreprocessConfig,
@@ -122,7 +137,7 @@ export const useSettingsStore = defineStore(
   },
   {
     persist: {
-      pick: ['debugMode', 'insightCardTheme'],
+      pick: ['debugMode', 'insightCardTheme', 'readingFontSize', 'readingFontBold'],
       storage: localStorage,
     },
     backendPersist: {

@@ -17,6 +17,15 @@ import {
   type MappedMessage,
 } from './message-sql'
 
+/** Resolve a stored message through its original data source without rewriting history. */
+export function getMessageImageReference(db: DatabaseAdapter, messageId: number) {
+  return db
+    .prepare(
+      'SELECT platform_message_id AS platformMessageId, (SELECT platform FROM meta LIMIT 1) AS platform FROM message WHERE id = ?'
+    )
+    .get(messageId) as { platformMessageId: string | null; platform: string } | undefined
+}
+
 export interface MessageResult {
   id: number
   senderId: number

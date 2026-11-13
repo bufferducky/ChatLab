@@ -179,32 +179,36 @@ class WeComSource:
         source = Path(config['wecomSource']).expanduser().resolve()
         sys.path[:0] = [str(source), str(source / 'decrypt/macos')]
         from decrypt import export_wxwork as ex
+        from decrypt import wxwork_crypto as crypto
         from decrypt.local_query import MessageStore
-        from decrypt.wxwork_crypto import PAGE_SZ, SQLITE_HDR, decrypt_database, load_valid_keys
         self.ex, self.store = ex, MessageStore
-        self.page_size, self.header = PAGE_SZ, SQLITE_HDR
-        self.decrypt, self.keys = decrypt_database, load_valid_keys
+        self.crypto, self.read_snapshot = crypto, crypto.read_snapshot
         self.signature = None
 
     def refresh(self):
+        from snapshot_cache import collector_lock
+        with collector_lock(self.cache.root):
+            return self._refresh()
+
+    def _refresh(self):
+        from snapshot_cache import SnapshotStore
         profile = Path(self.config['profile']).expanduser().resolve()
         paths = [profile / 'Messages1' / name for name in ('Info.db', 'Session.db')]
         inputs = paths + [Path(str(p) + '-wal') for p in paths] + [Path(self.config['keyFile'])]
-        signature = [(str(p), p.stat().st_size, p.stat().st_mtime_ns) if p.exists() else (str(p), None)
-                     for p in inputs]
+        signature = []
+        for path in inputs:
+            try:
+                info = path.stat()
+                signature.append((str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+            except FileNotFoundError:
+                signature.append((str(path), None))
         if self.signature == signature:
             return {'unchanged': True, **self.cache.status()}
-        with tempfile.TemporaryDirectory(prefix='.snapshot-', dir=self.cache.root) as directory:
-            for original in paths:
-                with original.open('rb') as stream:
-                    header = stream.read(self.page_size)
-                keys = self.keys(self.config['keyFile'], header)
-                if not keys and not header.startswith(self.header):
-                    raise ValueError('Existing WeCom key is no longer valid')
-                self.decrypt(original, Path(directory) / original.name, keys[0] if keys else None)
-            info = Path(directory) / 'Info.db'
+        snapshots = SnapshotStore(self.cache.root / 'snapshots', self.crypto, reader=self.read_snapshot)
+        with snapshots.stage(paths, self.config['keyFile']) as snapshot:
+            info = snapshot.data / 'Info.db'
             from decrypt.local_io import connect_readonly
-            with contextlib.closing(connect_readonly(info)) as db:
+            with contextlib.closing(connect_readonly(info, immutable=True)) as db:
                 store = self.store(db, users=self.ex._load_user_names(str(info)))
                 types = {str(r[0]): r[1] for r in db.execute('SELECT RID,conversationtype FROM CONVERSATION')}
                 conversations = [{**c, 'kind': 'group' if types.get(c['id']) == 1 else 'private'}
@@ -219,6 +223,8 @@ class WeComSource:
                                'local_id': row['LID'], 'type_code': row['content_type'],
                                'send_time': row['send_time'], '_raw': row['content']}
                 result = self.cache.ingest(account, conversations, rows(), self.ex.render, self.ex.CARD_TYPES)
+            snapshot.commit()
+            result['snapshot'] = snapshot.metrics
         self.signature = signature
         return {**result, **self.cache.status()}
 
@@ -296,6 +302,8 @@ def main():
         print(json.dumps({'configured': True, 'port': args.port}))
         return
     config = json.loads(config_path.read_text())
+    # The signed runpy launcher does not put the script's directory on sys.path.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     cache = Cache(args.home)
     if args.command == 'status':
         print(json.dumps(cache.status()))
@@ -303,9 +311,16 @@ def main():
     source = WeComSource(config, cache)
 
     def refresh():
+        from snapshot_cache import process_write_bytes
+        started = time.monotonic()
+        before_writes = process_write_bytes()
         try:
             result = source.refresh()
             if not result.get('unchanged'):
+                after_writes = process_write_bytes()
+                if before_writes is not None and after_writes is not None:
+                    result['processWriteMiB'] = round((after_writes - before_writes) / 2**20, 3)
+                result['durationSeconds'] = round(time.monotonic() - started, 3)
                 print(json.dumps(result), flush=True)
         except Exception as error:
             cache.fail(error)

@@ -13,6 +13,8 @@ import { registerContactsRoutes } from './contacts'
 import { registerExportRoutes } from './export'
 import { registerLogRoutes } from './logs'
 import { registerMemberRoutes } from './members'
+import { registerMessageImageRoutes } from './message-images'
+import type { AutomationRouteHostContext } from '../../context/automation'
 import { registerNavigationLayoutRoutes } from './navigation-layout'
 import { registerMergeRoutes } from './merge'
 import { registerNlpRoutes } from './nlp'
@@ -27,7 +29,8 @@ export type WebRoutesContext = RuntimeRouteContext &
   ServiceRouteContext &
   MergeRouteContext &
   AiRouteContext &
-  StorageRouteContext
+  StorageRouteContext &
+  AutomationRouteHostContext
 
 export interface WebRouteOptions extends AiRouteOptions {
   /** Trusted Node plugin facets selected by the platform's static catalog. */
@@ -43,6 +46,7 @@ export function registerWebRoutes(server: FastifyInstance, ctx: WebRoutesContext
 
   registerSessionRoutes(server, resolvedCtx)
   registerMemberRoutes(server, resolvedCtx)
+  registerMessageImageRoutes(server, resolvedCtx)
   registerContactsRoutes(server, resolvedCtx)
   registerPeopleRelationshipsRoutes(server, resolvedCtx)
   registerNavigationLayoutRoutes(server, resolvedCtx)
