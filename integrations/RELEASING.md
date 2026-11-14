@@ -33,4 +33,6 @@
 node scripts/personal-release.mjs verify /path/to/downloaded-assets
 ```
 
+如果两个平台构建均成功、仅发布组装失败，可手动运行 `assemble-personal-release.yml`，指定原 tag 和构建 run。该流程检查成功作业及 tag 对应的 checkout 记录，复用原始产物，重新校验、下载复核后发布。NSIS 关闭差分包时可以省略更新清单中的 size，但 SHA512 必须匹配。
+
 手动补传只接受同一 tag 源码的产物。不能将旧构建改名充当新版本；本机交付记录及包含绝对路径的构建清单不作为公共附件。

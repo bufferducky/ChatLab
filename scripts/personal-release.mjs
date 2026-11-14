@@ -42,7 +42,7 @@ function unquote(value) {
   return value.replace(/^(['"])(.*)\1$/, '$2')
 }
 
-export function verifyRelease(directory, write = false) {
+export function verifyRelease(directory, write = false, sourceCommit) {
   const actual = fs
     .readdirSync(directory)
     .filter((name) => name !== 'SHA256SUMS.txt')
@@ -59,7 +59,8 @@ export function verifyRelease(directory, write = false) {
   const info = JSON.parse(fs.readFileSync(path.join(directory, 'BUILD_INFO.json'), 'utf8'))
   if (info.version !== version || !/^[a-f0-9]{40}$/.test(info.commit))
     throw new Error('Release source identity mismatch')
-  const expectedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+  const expectedCommit =
+    sourceCommit ?? execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
   if (info.commit !== expectedCommit) throw new Error('Release commit does not match checked-out source')
   for (const manifest of ['latest-mac.yml', 'latest.yml']) {
     const text = fs.readFileSync(path.join(directory, manifest), 'utf8')
@@ -83,7 +84,10 @@ export function verifyRelease(directory, write = false) {
       if (!actual.includes(file.name) || !/\.(dmg|zip|exe)$/.test(file.name))
         throw new Error('Updater references an unknown file')
       const filename = path.join(directory, file.name)
-      if (fs.statSync(filename).size !== file.size || digest(filename, 'sha512', 'base64') !== file.hash)
+      if (
+        (file.size !== undefined && fs.statSync(filename).size !== file.size) ||
+        digest(filename, 'sha512', 'base64') !== file.hash
+      )
         throw new Error(`Updater integrity mismatch: ${file.name}`)
     }
   }
@@ -113,6 +117,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const [command, destination, flag] = process.argv.slice(2)
   if (command === 'notes' && destination) fs.writeFileSync(destination, releaseNotes())
   else if (command === 'verify' && destination)
-    console.log(JSON.stringify(verifyRelease(destination, flag === '--write-checksums')))
+    console.log(
+      JSON.stringify(verifyRelease(destination, flag === '--write-checksums', process.env.RELEASE_SOURCE_COMMIT))
+    )
   else throw new Error('Usage: personal-release.mjs notes <file> | verify <directory> [--write-checksums]')
 }

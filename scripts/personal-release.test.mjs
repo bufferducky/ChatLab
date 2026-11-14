@@ -23,13 +23,15 @@ test('a complete release verifies its source, updater payloads and redownloaded 
     `version: ${version}\nfiles:\n` +
     names.map((name) => `  - url: ${name}\n    sha512: ${digest(data)}\n    size: ${data.length}\n`).join('')
   fs.writeFileSync(path.join(directory, 'latest-mac.yml'), manifest([zip, dmg]))
-  fs.writeFileSync(path.join(directory, 'latest.yml'), manifest([exe]))
+  // NSIS with differentialPackage=false intentionally omits file size.
+  fs.writeFileSync(path.join(directory, 'latest.yml'), manifest([exe]).replace(/^    size:.*\n/gm, ''))
   fs.writeFileSync(
     path.join(directory, 'BUILD_INFO.json'),
     JSON.stringify({ version, commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() })
   )
   assert.equal(verifyRelease(directory, true).assets, 6)
   assert.equal(verifyRelease(directory).assets, 6)
+  assert.throws(() => verifyRelease(directory, false, 'f'.repeat(40)), /commit/)
   fs.appendFileSync(path.join(directory, zip), 'corrupted')
   assert.throws(() => verifyRelease(directory), /integrity mismatch/)
   fs.writeFileSync(path.join(directory, zip), data)
