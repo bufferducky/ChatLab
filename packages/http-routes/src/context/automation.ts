@@ -3,6 +3,13 @@ export interface AutomationDataSourceLike {
   sessions: Array<{ id: string; targetSessionId?: string | null }>
 }
 
+export type AutomationSessionKind = 'group' | 'private' | 'other'
+
+export interface AutomationCollectScope {
+  type?: AutomationSessionKind
+  sessionIds?: string[]
+}
+
 export interface AutomationRouteContext {
   dsManager: {
     loadAll: () => unknown[]
@@ -35,6 +42,7 @@ export interface AutomationRouteContext {
     triggerPullAll: (sourceId: string) => Promise<unknown>
     getProgress: () => unknown[]
   }
+  collectAndPull?: (sourceId: string, scope: AutomationCollectScope) => Promise<unknown>
   serverInfo?: { port: number; host: string; socket?: string; token: string }
   deleteSessionData?: (sessionId: string) => void
   reloadTimer?: (sourceId: string, immediate?: boolean) => void

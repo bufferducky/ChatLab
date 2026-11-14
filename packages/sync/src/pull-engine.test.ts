@@ -149,6 +149,51 @@ function createEngine(options: {
 }
 
 describe('PullEngine', () => {
+  it('pulls only the selected sessions', async () => {
+    const sessions = ['a', 'b', 'c'].map(createSessionWithId)
+    const dataSource = { ...createDataSource(), sessions }
+    const files = sessions.map(() =>
+      writeTempJson({
+        messages: [{ platformMessageId: 'm1', timestamp: 200, content: 'x' }],
+        sync: { hasMore: false, nextSince: 200 },
+      })
+    )
+    const fetchCalls: string[] = []
+    const engine = createEngine({
+      files,
+      dataSource,
+      importResult: { success: true, newMessageCount: 1 },
+      fetchCalls,
+    })
+    const result = await engine.pullSessions(dataSource.id, ['a', 'c'])
+    assert.equal(result.success, true)
+    assert.equal(result.newMessages, 2)
+    assert.deepEqual(fetchCalls, ['remote_a', 'remote_c'])
+    assert.deepEqual(result.errors, [])
+  })
+
+  it('rejects a second range pull while one is running', async () => {
+    const sessions = ['a', 'b'].map(createSessionWithId)
+    const dataSource = { ...createDataSource(), sessions }
+    const files = sessions.map(() =>
+      writeTempJson({
+        messages: [{ platformMessageId: 'm1', timestamp: 200, content: 'x' }],
+        sync: { hasMore: false, nextSince: 200 },
+      })
+    )
+    const engine = createEngine({
+      files,
+      dataSource,
+      importResult: { success: true, newMessageCount: 0 },
+    })
+    const [first, second] = await Promise.all([
+      engine.pullSessions(dataSource.id, ['a']),
+      engine.pullSessions(dataSource.id, ['b']),
+    ])
+    assert.equal(first.success, true)
+    assert.deepEqual(second.errors, ['Pull already in progress'])
+  })
+
   it('publishes successful idle pulls for pending catch-up and supports unsubscribing listeners', async () => {
     const session = createSession()
     const dataSource = { ...createDataSource(), sessions: [session] }

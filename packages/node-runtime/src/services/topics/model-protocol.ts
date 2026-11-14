@@ -24,6 +24,7 @@ export function buildTopicBlockPrompt(input: {
   ledger: TopicLedger
   block: TopicSourceBlock
   totalBlocks: number
+  includeProgress?: boolean
 }): { systemPrompt: string; userPrompt: string } {
   const language = resolveOutputLanguage(input.locale)
   const chatGuidance = buildChatTypeGuidance(input.chatType)
@@ -52,8 +53,9 @@ Current messages:
 ${formatBlockMessages(input.block, input.timezone)}
 
 Return: {"operations":[...],"assignments":[{"topicRef":"...","messageIds":[1,2]}]}. Every operation object MUST use the exact discriminator field "operation"; never use "op", "action", or another alias.
-Example create item: {"operation":"create","localId":"t1","title":"...","summary":"...","state":"active","evidence":[]}.
+Example create item: {"operation":"create","localId":"t1","title":"...","summary":"...","state":"active","evidence":[]${input.includeProgress ? ',"progress":"Concise new information from the cited current messages"' : ''}}.
 For append use operation, topicId, optional title, summary, evidence. For merge use operation, targetTopicId, sourceTopicIds, title, summary, state, evidence. For close/reopen use operation, topicId, optional title/summary, evidence. Every evidence item must include messageId, timestamp exactly as supplied, and role.
+${input.includeProgress ? 'REQUIRED on every create, append, merge, close and reopen item: "progress" (string). Describe only NEW substantive information in the output language and cite current evidence for it; use "progress":"" for a repetition or wording-only change. Never omit this field. summary remains the complete current understanding.\n' : ''}\
 For each assignment, topicRef MUST be the localId of a topic created in this block or the exact id of an existing ledger topic. Group all message IDs for the same topic into one assignment. Assignment messageIds must come from this block only. Return assignments:[] only when no message belongs to a meaningful topic.`,
   }
 }

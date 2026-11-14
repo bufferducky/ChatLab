@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hmac
 import json
 import os
@@ -96,6 +97,67 @@ def native_peer(conversation):
         return None
     value = payload.get("native_id") if isinstance(payload, dict) else None
     return str(value) if value not in (None, "") else None
+
+
+@contextlib.contextmanager
+def collector_lock(root):
+    """Only one collector may advance the archive or publish a snapshot."""
+    descriptor = os.open(Path(root) / "collector.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("CollectorBusy") from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
+class CollectState:
+    """In-process status of the most recent collection attempt.
+
+    Manual collect requests and the scheduled loop share this state so a
+    second request reuses the running round instead of starting a new one.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = "idle"
+        self._collect_id = ""
+        self._started_at = 0
+        self._finished_at = 0
+        self._changed = 0
+        self._error = ""
+
+    def start(self):
+        with self._lock:
+            if self._state == "running":
+                return False
+            self._state = "running"
+            self._collect_id = secrets.token_hex(8)
+            self._started_at = int(time.time())
+            self._finished_at = 0
+            self._changed = 0
+            self._error = ""
+            return True
+
+    def finish(self, *, changed=0, error="", state="done"):
+        with self._lock:
+            self._state = "failed" if error else state
+            self._changed = changed
+            self._error = error
+            self._finished_at = int(time.time())
+
+    def snapshot(self):
+        with self._lock:
+            return {
+                "state": self._state,
+                "collectId": self._collect_id,
+                "startedAt": self._started_at,
+                "finishedAt": self._finished_at,
+                "changed": self._changed,
+                "error": self._error,
+            }
 
 
 class Cache:
@@ -592,19 +654,47 @@ def image_error(error):
     }
 
 
-def make_server(cache, config, images=None):
+def make_server(cache, config, images=None, collect_state=None, trigger_collect=None):
+    def health():
+        payload = dict(cache.status())
+        if collect_state is not None:
+            payload["capabilities"] = ["collect"]
+            payload["refresh"] = collect_state.snapshot()
+        return payload
+
+    def authorized(handler):
+        return hmac.compare_digest(
+            handler.headers.get("Authorization", ""), "Bearer " + config["token"]
+        )
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
 
+        def do_POST(self):
+            path = urlsplit(self.path)
+            if not authorized(self):
+                return self.reply(401, {"error": "Unauthorized"})
+            if path.path != "/api/v1/collect":
+                return self.reply(404, {"error": "Not found"})
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length:
+                self.rfile.read(length)
+            if trigger_collect is None:
+                return self.reply(501, {"error": "Collect is not enabled"})
+            status, payload = trigger_collect()
+            return self.reply(status, payload)
+
         def do_GET(self):
             path = urlsplit(self.path)
             if path.path == "/health":
-                return self.reply(200, cache.status())
-            if not hmac.compare_digest(
-                self.headers.get("Authorization", ""), "Bearer " + config["token"]
-            ):
+                return self.reply(200, health())
+            if not authorized(self):
                 return self.reply(401, {"error": "Unauthorized"})
+            if path.path == "/api/v1/collect":
+                if collect_state is None:
+                    return self.reply(501, {"error": "Collect is not enabled"})
+                return self.reply(200, collect_state.snapshot())
             if not cache.status()["ready"]:
                 return self.reply(
                     503, {"error": "QQ snapshot unavailable; inspect /health"}
@@ -778,59 +868,103 @@ def main():
         print(json.dumps(cache.status()))
         return
     source = QQSource(config, cache)
+    collect_state = CollectState()
     result = source.bootstrap()
     if result:
         print(json.dumps(result), flush=True)
     if args.command == "bootstrap":
         return
 
-    def refresh():
+    def run_refresh():
         from snapshot_cache import process_write_bytes
 
         started = time.monotonic()
         before_writes = process_write_bytes()
         try:
-            result = source.refresh()
-            if not result.get("unchanged"):
-                after_writes = process_write_bytes()
-                if before_writes is not None and after_writes is not None:
-                    result["processWriteMiB"] = round(
-                        (after_writes - before_writes) / 2**20, 3
-                    )
-                print(
-                    json.dumps(
-                        {
-                            **result,
-                            "durationSeconds": round(time.monotonic() - started, 2),
-                        }
-                    ),
-                    flush=True,
-                )
-        except Exception as error:  # noqa: BLE001 -- Retain checkpoints and record a safe failure category.
+            with collector_lock(cache.root):
+                result = source.refresh()
+        except Exception as error:
             cache.fail(error)
+            raise
+        if not result.get("unchanged"):
+            after_writes = process_write_bytes()
+            if before_writes is not None and after_writes is not None:
+                result["processWriteMiB"] = round(
+                    (after_writes - before_writes) / 2**20, 3
+                )
+            print(
+                json.dumps(
+                    {
+                        **result,
+                        "durationSeconds": round(time.monotonic() - started, 2),
+                    }
+                ),
+                flush=True,
+            )
+        return result
+
+    def collect_body():
+        try:
+            result = run_refresh()
+        except RuntimeError as error:
+            if str(error) == "CollectorBusy":
+                collect_state.finish(state="busy")
+                print(json.dumps({"collectSkipped": "CollectorBusy"}), flush=True)
+                return None
+            collect_state.finish(error=type(error).__name__)
             print(
                 json.dumps({"refreshFailed": True, "error": type(error).__name__}),
                 flush=True,
             )
-            if args.command == "refresh":
-                raise SystemExit(1) from None
+            return None
+        except Exception as error:  # noqa: BLE001 -- Record only safe failure categories.
+            collect_state.finish(error=type(error).__name__)
+            print(
+                json.dumps({"refreshFailed": True, "error": type(error).__name__}),
+                flush=True,
+            )
+            return None
+        collect_state.finish(changed=int(result.get("changedMessages") or 0))
+        return result
+
+    def collect_blocking():
+        if not collect_state.start():
+            return None
+        return collect_body()
+
+    def trigger_collect():
+        if not collect_state.start():
+            return 200, {"alreadyRunning": True, **collect_state.snapshot()}
+        threading.Thread(target=collect_body, daemon=True).start()
+        return 202, collect_state.snapshot()
 
     if args.command == "refresh":
-        refresh()
+        try:
+            run_refresh()
+        except Exception as error:  # noqa: BLE001 -- Keep a single safe failure line.
+            label = (
+                "CollectorBusy"
+                if str(error) == "CollectorBusy"
+                else type(error).__name__
+            )
+            print(json.dumps({"refreshFailed": True, "error": label}), flush=True)
+            raise SystemExit(1) from None
         return
     stop = threading.Event()
 
     def loop():
-        refresh()
+        collect_blocking()
         while not stop.wait(max(30, config["interval"])):
-            refresh()
+            collect_blocking()
 
     # This service also runs through a signed runpy launcher, which does not
     # automatically put the integration directory on Python's module path.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from image_media import QQImages
 
-    server = make_server(cache, config, QQImages(source))
+    server = make_server(
+        cache, config, QQImages(source), collect_state, trigger_collect
+    )
     threading.Thread(target=loop, daemon=True).start()
     try:
         server.serve_forever()

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { AutomationRouteHostContext } from '../../context/automation'
+import type { AutomationRouteHostContext, AutomationSessionKind } from '../../context/automation'
 
 function requireAutomation(ctx: AutomationRouteHostContext) {
   return ctx.automation ?? null
@@ -171,6 +171,33 @@ export function registerAutomationRoutes(server: FastifyInstance, ctx: Automatio
     const automation = requireAutomation(ctx)
     if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
     return automation.pullEngine.triggerPullAll(request.params.id)
+  })
+
+  server.post<{
+    Params: { id: string }
+    Body: { type?: string; sessionIds?: string[] }
+  }>('/_web/automation/data-sources/:id/collect-and-pull', async (request, reply) => {
+    const automation = requireAutomation(ctx)
+    if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
+    if (!automation.collectAndPull) {
+      return reply.code(501).send({ error: 'On-demand collection is not available' })
+    }
+    const type = request.body?.type
+    if (type && !['group', 'private', 'other'].includes(type)) {
+      return reply.code(400).send({ error: 'Invalid session type' })
+    }
+    const sessionIds = request.body?.sessionIds
+    if (sessionIds !== undefined && (!Array.isArray(sessionIds) || sessionIds.some((id) => typeof id !== 'string'))) {
+      return reply.code(400).send({ error: 'Invalid sessionIds' })
+    }
+    try {
+      return await automation.collectAndPull(request.params.id, {
+        type: type as AutomationSessionKind | undefined,
+        sessionIds,
+      })
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+    }
   })
 
   server.get('/_web/automation/sync-progress', async (_request, reply) => {

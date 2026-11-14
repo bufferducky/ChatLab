@@ -611,7 +611,10 @@
         "message": "確認刪除訂閱「{name}」？",
         "keepData": "僅刪除訂閱",
         "deleteData": "同時刪除匯入的聊天"
-      }
+      },
+      "collecting": "採集中",
+      "syncGroups": "僅群組",
+      "syncPrivates": "僅私聊"
     },
     "usage": {
       "title": "使用說明",

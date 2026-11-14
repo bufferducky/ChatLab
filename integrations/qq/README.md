@@ -47,6 +47,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.ch
 
 服务绑定 `127.0.0.1:5035`，Pull 接口需要 Bearer token。`/health` 只返回就绪状态、计数、刷新时间及错误类别。凭证、独立存档和统计报告保存在 `~/.local/share/chatlab-qq/`，不放进 Git。移动代码仓库或读取器后需要更新 LaunchAgent 路径。
 
+### 手动立即采集
+
+采集服务除定时刷新外，还暴露两个需要同一 Bearer token 的端点，供 ChatLab 的「采集并拉取」按钮使用：
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5035/api/v1/collect
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5035/api/v1/collect
+```
+
+- 正在采集时再次触发会复用当前轮，不会并发解密；响应中的 `alreadyRunning` 表示复用了进行中的一轮。
+- 采集是整库操作，无法只采某个群；「仅群聊」「仅私聊」「单个会话」筛选的是 ChatLab 之后的拉取阶段。
+- 定时采集、手动采集和命令行 `bridge.py refresh` 共用同一把采集锁；冲突时返回 `busy`，稍后重试即可。
+
 ## 在线补图（实验）
 
 本地缓存未命中且桥接可用时，图片接口按原消息查询 QQ 附件并调用 `downloadRichMedia`，校验原图 MD5 后返回字节；ChatLab 继续生成预览并写入共用缓存。桥接不可用、QQ 离线或账号/数据目录不符时返回明确错误码，不静默降级成旧数据。

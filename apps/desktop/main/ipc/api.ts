@@ -14,7 +14,15 @@ import { getImportingStatus } from '../api/routes/import'
 import { getInternalDbManager } from '../internal-api/server'
 import { PreferencesManager, createDatabaseManagerAdapter, ownerProfileService } from '@openchatlab/node-runtime'
 import { ElectronFetcher, WorkerImporter, BrowserWindowNotifier } from '../api/adapters'
-import { ConfigManager, DataSourceManager, PullEngine, initScheduler, stopAllTimers } from '@openchatlab/sync'
+import {
+  CollectAndPullService,
+  CollectCoordinator,
+  ConfigManager,
+  DataSourceManager,
+  PullEngine,
+  initScheduler,
+  stopAllTimers,
+} from '@openchatlab/sync'
 
 const syncLogger = {
   info: (msg: string) => apiLogger.info(msg),
@@ -25,6 +33,7 @@ const syncLogger = {
 let configManager: ConfigManager
 let dsManager: DataSourceManager
 let pullEngine: PullEngine
+let collectAndPull: CollectAndPullService
 
 function ensureInstances(): void {
   if (configManager) return
@@ -55,6 +64,13 @@ function ensureInstances(): void {
       }
     },
   })
+
+  collectAndPull = new CollectAndPullService({
+    dsManager,
+    pullEngine,
+    collect: new CollectCoordinator({ logger: syncLogger }),
+    logger: syncLogger,
+  })
 }
 
 /** Exported for use by api/index.ts */
@@ -71,6 +87,11 @@ export function getDataSourceManager(): DataSourceManager {
 export function getPullEngine(): PullEngine {
   ensureInstances()
   return pullEngine
+}
+
+export function getCollectAndPull(): CollectAndPullService {
+  ensureInstances()
+  return collectAndPull
 }
 
 export function registerApiHandlers(_ctx: IpcContext): void {

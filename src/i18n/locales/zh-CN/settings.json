@@ -611,7 +611,10 @@
         "message": "确认删除订阅「{name}」？",
         "keepData": "仅删除订阅",
         "deleteData": "同时删除导入的聊天"
-      }
+      },
+      "collecting": "采集中",
+      "syncGroups": "仅群聊",
+      "syncPrivates": "仅私聊"
     },
     "usage": {
       "title": "使用说明",

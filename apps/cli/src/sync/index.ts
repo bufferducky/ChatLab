@@ -8,7 +8,16 @@ import type { FastifyInstance } from 'fastify'
 import type { DatabaseManager } from '@openchatlab/node-runtime'
 import { PreferencesManager, createDatabaseManagerAdapter, ownerProfileService } from '@openchatlab/node-runtime'
 import type { PathProvider } from '@openchatlab/core'
-import { DataSourceManager, PullEngine, initScheduler, stopAllTimers, reloadTimer, stopTimer } from '@openchatlab/sync'
+import {
+  CollectAndPullService,
+  CollectCoordinator,
+  DataSourceManager,
+  PullEngine,
+  initScheduler,
+  stopAllTimers,
+  reloadTimer,
+  stopTimer,
+} from '@openchatlab/sync'
 import type { SyncLogger } from '@openchatlab/sync'
 import { registerAutomationRoutes } from '@openchatlab/http-routes'
 import type { AutomationRouteContext } from '@openchatlab/http-routes'
@@ -59,9 +68,17 @@ export function initSync(
     },
   })
 
+  const collectAndPull = new CollectAndPullService({
+    dsManager,
+    pullEngine,
+    collect: new CollectCoordinator({ logger: syncLogger }),
+    logger: syncLogger,
+  })
+
   const automation: AutomationRouteContext = {
     dsManager,
     pullEngine,
+    collectAndPull: (sourceId, scope) => collectAndPull.run(sourceId, scope),
     serverInfo,
     deleteSessionData: (sessionId) => dbManager.deleteSessionDatabaseFiles(sessionId),
     reloadTimer,

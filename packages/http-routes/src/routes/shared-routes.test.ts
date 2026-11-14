@@ -655,6 +655,68 @@ describe('registerSharedRoutes smoke tests', () => {
     }
   })
 
+  it('POST /_web/automation/data-sources/:id/collect-and-pull forwards the scope', async () => {
+    const calls: Array<{ sourceId: string; scope: unknown }> = []
+    const ctx = createTestContext()
+    ctx.automation = {
+      serverInfo: { port: 5200, host: '127.0.0.1', token: 'api-token' },
+      dsManager: {} as NonNullable<typeof ctx.automation>['dsManager'],
+      pullEngine: {} as NonNullable<typeof ctx.automation>['pullEngine'],
+      collectAndPull: async (sourceId, scope) => {
+        calls.push({ sourceId, scope })
+        return {
+          collect: { supported: true, state: 'done', changed: 2, durationMs: 5 },
+          pull: { sessions: 1, newMessages: 2, errors: [] },
+        }
+      },
+    }
+    const routeApp = Fastify()
+    registerAutomationRoutes(routeApp, ctx)
+    await routeApp.ready()
+
+    try {
+      const resp = await routeApp.inject({
+        method: 'POST',
+        url: '/_web/automation/data-sources/source-1/collect-and-pull',
+        payload: { type: 'group', sessionIds: ['s1'] },
+      })
+      assert.equal(resp.statusCode, 200)
+      assert.deepEqual(calls, [{ sourceId: 'source-1', scope: { type: 'group', sessionIds: ['s1'] } }])
+      assert.equal((resp.json() as { pull: { newMessages: number } }).pull.newMessages, 2)
+
+      const invalid = await routeApp.inject({
+        method: 'POST',
+        url: '/_web/automation/data-sources/source-1/collect-and-pull',
+        payload: { type: 'team' },
+      })
+      assert.equal(invalid.statusCode, 400)
+    } finally {
+      await routeApp.close()
+    }
+  })
+
+  it('POST /_web/automation/data-sources/:id/collect-and-pull reports unsupported hosts', async () => {
+    const ctx = createTestContext()
+    ctx.automation = {
+      serverInfo: { port: 5200, host: '127.0.0.1', token: 'api-token' },
+      dsManager: {} as NonNullable<typeof ctx.automation>['dsManager'],
+      pullEngine: {} as NonNullable<typeof ctx.automation>['pullEngine'],
+    }
+    const routeApp = Fastify()
+    registerAutomationRoutes(routeApp, ctx)
+
+    try {
+      const resp = await routeApp.inject({
+        method: 'POST',
+        url: '/_web/automation/data-sources/source-1/collect-and-pull',
+        payload: {},
+      })
+      assert.equal(resp.statusCode, 501)
+    } finally {
+      await routeApp.close()
+    }
+  })
+
   it('PATCH /_web/sessions/:id/name updates the shared session metadata', async () => {
     const db = createSessionDb()
     const routeApp = Fastify()

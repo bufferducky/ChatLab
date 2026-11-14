@@ -628,6 +628,52 @@ export class PullEngine {
     this.logger.warn(`[Pull] Source ${ds.baseUrl} unavailable: ${detail}, skipped ${affectedSessions} sessions`)
   }
 
+  /**
+   * Pull only the selected sessions. Reuses the whole-source guard so a manual
+   * range pull never overlaps a scheduled pull.
+   */
+  async pullSessions(
+    sourceId: string,
+    sessionIds: string[]
+  ): Promise<{ success: boolean; newMessages: number; errors: string[] }> {
+    const ds = this.dsManager.get(sourceId)
+    if (!ds) return { success: false, newMessages: 0, errors: ['Data source not found'] }
+    if (this.pullingSourceIds.has(sourceId)) {
+      this.logger.info(`[Pull] Skipping pullSessions for source ${sourceId}: pull already in progress`)
+      return { success: false, newMessages: 0, errors: ['Pull already in progress'] }
+    }
+
+    const wanted = new Set(sessionIds)
+    this.pullingSourceIds.add(sourceId)
+    try {
+      const current = await this.discoverSessions(ds)
+      const targets = current.sessions.filter(
+        (session) => wanted.has(session.id) || wanted.has(session.remoteSessionId)
+      )
+      const errors: string[] = []
+      let newMessages = 0
+      let sourceUnavailable = false
+
+      for (let index = 0; index < targets.length; index++) {
+        const session = targets[index]
+        const result = await this.executePullSession(sourceId, current, session)
+        newMessages += result.newMessageCount
+        if (!result.success && result.error) errors.push(`${session.name}: ${result.error}`)
+        if (result.sourceUnavailable && result.error) {
+          sourceUnavailable = true
+          this.markRemainingSessionsSourceUnavailable({ ...current, sessions: targets }, index + 1, result.error)
+          this.logSourceUnavailable(current, result.error, targets.length - index)
+          break
+        }
+      }
+
+      if (!sourceUnavailable) this.sourceUnavailableLogs.delete(ds.id)
+      return { success: errors.length === 0, newMessages, errors }
+    } finally {
+      this.pullingSourceIds.delete(sourceId)
+    }
+  }
+
   async triggerPull(sourceId: string, sessionId?: string): Promise<{ success: boolean; error?: string }> {
     let ds = this.dsManager.get(sourceId)
     if (!ds) return { success: false, error: 'Data source not found' }

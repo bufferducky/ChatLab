@@ -10,11 +10,13 @@ This is an independently maintained personal project based on [ChatLab](https://
 
 - Compact conversation reading with sender grouping, reply navigation and sender-specific message navigation.
 - Telegram previews and originals in a shared cache, foreground download priority, cancellation and server cooldown feedback. QQ images use a bridge to the locally signed-in client.
-- Scheduled topic organization, cross-day progress, evidence links and unread versions, alongside historical daily views.
+- Scheduled incremental topic organization for unprocessed messages from the last 7 days, cross-day progress, evidence links and unread versions, alongside historical daily views. The default window is 09:30–23:40 Asia/Shanghai; the app must remain running with a model configured. Repeated pulls do not repeat summaries.
 - Group highlights with reading actions, source links, model usage and budget status.
-- Separate local collectors with authenticated Pull APIs, stable message IDs and resumable checkpoints.
+- Separate local collectors with authenticated Pull APIs, stable message IDs and resumable checkpoints. Settings → Automation supports immediate collection and pulling for groups, private chats, all subscriptions or a single conversation; collectors without on-demand collection fall back to pulling existing data.
 
 AI features require your own model configuration. Messages remain locally stored; using an external model sends the relevant content to your selected provider.
+
+Automatic topics and “Update now” both use a rolling 7-day window, including newly imported messages within that window. Older original messages and existing topics remain available. Upstream model failures preserve progress for retry. Group/private filters select the pull scope; QQ collection still runs for the whole source. See [topic organization](packages/node-runtime/src/services/topics/README.md) and the [Pull protocol](docs/en/standard/chatlab-pull.md).
 
 ## Install and connect
 

@@ -10,7 +10,14 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from bridge import Cache, convert_message, extract_new_rows, make_server
+from bridge import (
+    Cache,
+    CollectState,
+    collector_lock,
+    convert_message,
+    extract_new_rows,
+    make_server,
+)
 
 
 class BridgeTests(unittest.TestCase):
@@ -259,6 +266,104 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(
                 db.execute("SELECT COUNT(*) FROM c2c_msg_table").fetchone()[0], 1
             )
+
+    def test_collect_endpoint_reuses_running_round_and_reports_state(self):
+        state = CollectState()
+        starts = []
+
+        def trigger():
+            if not state.start():
+                return 200, {"alreadyRunning": True, **state.snapshot()}
+            starts.append(1)
+            return 202, state.snapshot()
+
+        server = make_server(
+            self.cache, {"token": "test-token", "port": 0}, None, state, trigger
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        def post(path, token="test-token"):
+            request = Request(
+                base + path,
+                method="POST",
+                headers={"Authorization": "Bearer " + token},
+            )
+            try:
+                with urlopen(request) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        def get(path, token="test-token"):
+            with urlopen(
+                Request(base + path, headers={"Authorization": "Bearer " + token})
+            ) as response:
+                return json.load(response)
+
+        try:
+            self.assertEqual(post("/api/v1/collect", "wrong")[0], 401)
+            status, payload = post("/api/v1/collect")
+            self.assertEqual(status, 202)
+            self.assertEqual(payload["state"], "running")
+            self.assertEqual(len(starts), 1)
+
+            # A second click must reuse the running round, not start another.
+            status, payload = post("/api/v1/collect")
+            self.assertEqual(status, 200)
+            self.assertTrue(payload["alreadyRunning"])
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(get("/api/v1/collect")["state"], "running")
+
+            state.finish(changed=3)
+            snapshot = get("/api/v1/collect")
+            self.assertEqual(snapshot["state"], "done")
+            self.assertEqual(snapshot["changed"], 3)
+
+            health = get("/health", "wrong")
+            self.assertEqual(health["capabilities"], ["collect"])
+            self.assertEqual(health["refresh"]["state"], "done")
+            self.assertEqual(health["refresh"]["changed"], 3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_collect_endpoints_are_disabled_without_a_collect_runner(self):
+        server = make_server(self.cache, {"token": "test-token", "port": 0})
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+        try:
+            request = Request(
+                base + "/api/v1/collect",
+                method="POST",
+                headers={"Authorization": "Bearer test-token"},
+            )
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(request)
+            self.assertEqual(caught.exception.code, 501)
+
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(
+                    Request(
+                        base + "/api/v1/collect",
+                        headers={"Authorization": "Bearer test-token"},
+                    )
+                )
+            self.assertEqual(caught.exception.code, 501)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_collector_lock_rejects_a_concurrent_collection(self):
+        with collector_lock(self.cache.root):
+            with self.assertRaises(RuntimeError) as caught:
+                with collector_lock(self.cache.root):
+                    pass
+        self.assertEqual(str(caught.exception), "CollectorBusy")
 
     def test_http_auth_and_keyset_paging(self):
         self.add(1)

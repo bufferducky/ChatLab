@@ -611,7 +611,10 @@
         "message": "「{name}」を削除してもよろしいですか？",
         "keepData": "サブスクリプションのみ削除",
         "deleteData": "インポートしたチャットも削除"
-      }
+      },
+      "collecting": "収集中",
+      "syncGroups": "グループのみ",
+      "syncPrivates": "個人のみ"
     },
     "usage": {
       "title": "使用ガイド",

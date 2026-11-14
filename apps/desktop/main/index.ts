@@ -4,7 +4,7 @@ import { optimizer, platform } from '@electron-toolkit/utils'
 import { checkUpdate } from './update/manager'
 import mainIpcMain, { cleanup } from './ipc'
 import { startInternalServer, stopInternalServer, registerInternalApiIpc } from './internal-api/server'
-import { getDataSourceManager, getPullEngine } from './ipc/api'
+import { getCollectAndPull, getDataSourceManager, getPullEngine } from './ipc/api'
 import { getPathProvider } from './paths/provider'
 import { initAnalytics } from './analytics'
 import { logger } from './logger'
@@ -82,7 +82,11 @@ class MainProcess {
       if (process.platform === 'win32') app.setAppUserModelId(app.getName())
 
       try {
-        await startInternalServer(getPathProvider(), { getDataSourceManager, getPullEngine })
+        await startInternalServer(getPathProvider(), {
+          getDataSourceManager,
+          getPullEngine,
+          getCollectAndPull,
+        })
         registerInternalApiIpc()
         console.log('[Main] Internal API Server ready')
       } catch (error) {

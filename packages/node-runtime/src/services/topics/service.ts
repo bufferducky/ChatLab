@@ -140,7 +140,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       settings,
       withinSchedule: isTopicAutomationTime(settings, now()),
       modelConfigured: Boolean(deps.getModelClient()),
-      pendingMessages: countLiveTopicMessages(db, state),
+      pendingMessages: countLiveTopicMessages(db, state, now()),
       syncedAt: state.syncedAt,
       processedAt: state.processedAt,
       topics: store.getLiveTopics(sessionId),
@@ -168,7 +168,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   function startLiveRun(sessionId: string, automatic: boolean): ChatTopicRun | null {
     assertOpen()
     const state = store.ensureLiveSession(sessionId, now())
-    const messages = loadLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state)
+    const messages = loadLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state, now())
     if (!messages.length) return null
     const model = requireModelClient()
     const dayKey = formatTopicDayKey(Math.floor(now() / 1000), state.settings.timezone)
@@ -237,7 +237,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
           continue
         if (latest?.rangeKind === 'updates' && latest.status === 'failed' && now() - latest.updatedAt < 5 * 60_000)
           continue
-        if (countLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state) === 0) continue
+        if (countLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state, now()) === 0) continue
         startLiveRun(sessionId, true)
         return
       } catch (error) {
@@ -576,7 +576,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     let run = initialRun
     const db = deps.runtime.ensureReadonly(run.sessionId)
     const state = store.getLiveSession(run.sessionId)!
-    const messages = loadLiveTopicMessages(db, state)
+    const messages = loadLiveTopicMessages(db, state, now())
     const blocks = chunkTopicMessages(messages)
     run = updateRun(run, { totalBlocks: blocks.length, completedBlocks: 0 })
     for (const block of blocks) {

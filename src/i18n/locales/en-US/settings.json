@@ -611,7 +611,10 @@
         "message": "Are you sure you want to delete \"{name}\"?",
         "keepData": "Remove subscription only",
         "deleteData": "Also delete imported chats"
-      }
+      },
+      "collecting": "Collecting",
+      "syncGroups": "Groups only",
+      "syncPrivates": "Private only"
     },
     "usage": {
       "title": "Usage Guide",

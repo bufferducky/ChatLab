@@ -243,6 +243,58 @@ The remote data source returns incremental messages since `lastPullAt`. ChatLab 
 
 ---
 
+## Optional: Collect on Demand
+
+Beyond scheduled incremental sync, a source may expose `POST /collect` so ChatLab can run one collection round immediately when the user chooses "Collect and pull", instead of waiting for the source's own timer.
+
+::: tip Capability discovery
+ChatLab reads `capabilities` from `GET /health`. When `collect` is absent, or `POST /collect` returns 404/405, ChatLab falls back to pulling already collected data and existing sync is unaffected.
+:::
+
+### POST /collect
+
+```http
+POST {baseUrl}/collect
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{ "scope": { "type": "group" }, "reason": "manual" }
+```
+
+| Response | Meaning |
+| --- | --- |
+| `202 { "state": "running", "collectId": "...", "startedAt": 1711468800 }` | Collection started |
+| `200 { "state": "running", "alreadyRunning": true, ... }` | A round is already running; reuse it |
+| `404` / `405` | On-demand collection is not supported |
+| `503` | Source is not ready |
+
+`scope` is advisory and may be ignored: most collectors can only collect the whole source, so `scope` is useful for logging or future per-range implementations. ChatLab applies type and session filters to the pull stage.
+
+### GET /collect
+
+```http
+GET {baseUrl}/collect
+Authorization: Bearer {token}
+```
+
+```json
+{ "state": "done", "changed": 12, "startedAt": 1711468800, "finishedAt": 1711468812 }
+```
+
+`state` is one of `idle` / `running` / `done` / `failed` / `busy`. ChatLab polls every 500ms for up to 5 minutes. On timeout or failure it still pulls already collected data and reports the problem in the UI.
+
+### /health extension
+
+```json
+{
+  "ready": true,
+  "capabilities": ["collect"],
+  "refresh": { "state": "running", "startedAt": 1711468800 }
+}
+```
+
+---
+
 ## Optional: SSE Real-Time Notifications
 
 In addition to scheduled polling, a remote data source may optionally implement an SSE (Server-Sent Events) endpoint to **notify ChatLab that new data is available**.

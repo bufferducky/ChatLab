@@ -42,7 +42,13 @@ import {
 } from '@openchatlab/http-routes'
 import { createApiServer } from '@openchatlab/http-routes/server'
 import type { HttpRouteContext } from '@openchatlab/http-routes'
-import { reloadTimer, stopTimer, type DataSourceManager, type PullEngine } from '@openchatlab/sync'
+import {
+  reloadTimer,
+  stopTimer,
+  type CollectAndPullService,
+  type DataSourceManager,
+  type PullEngine,
+} from '@openchatlab/sync'
 import { getManager as getAIChatManager } from '../ai/chats'
 import { getManager as getAssistantManager } from '../ai/assistant/manager'
 import { getManager as getSkillManager } from '../ai/skills/manager'
@@ -74,6 +80,7 @@ const JSON_BODY_LIMIT = 50 * 1024 * 1024 // 50 MB
 interface InternalServerDependencies {
   getDataSourceManager(): DataSourceManager
   getPullEngine(): PullEngine
+  getCollectAndPull(): CollectAndPullService
 }
 
 /**
@@ -203,6 +210,7 @@ export async function startInternalServer(
       automation: {
         dsManager: dependencies.getDataSourceManager(),
         pullEngine: dependencies.getPullEngine(),
+        collectAndPull: (sourceId, scope) => dependencies.getCollectAndPull().run(sourceId, scope),
         deleteSessionData: (sessionId) => routeDbManager.deleteSessionDatabaseFiles(sessionId),
         reloadTimer,
         stopTimer,

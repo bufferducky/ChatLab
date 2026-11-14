@@ -243,6 +243,58 @@ GET {baseUrl}/sessions/{sessionId}/messages?format=chatlab&since={lastPullAt}
 
 ---
 
+## 可选：立即采集
+
+除定时增量同步外，数据源可以暴露 `POST /collect`，让 ChatLab 在用户点击"采集并拉取"时立即执行一轮采集，而不必等数据源自己的定时器。
+
+::: tip 能力探测
+ChatLab 读取 `GET /health` 返回的 `capabilities`；未声明 `collect`、或 `POST /collect` 返回 404/405 时，自动降级为"只拉取已采集数据"，不影响现有同步。
+:::
+
+### POST /collect
+
+```http
+POST {baseUrl}/collect
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{ "scope": { "type": "group" }, "reason": "manual" }
+```
+
+| 响应 | 含义 |
+| --- | --- |
+| `202 { "state": "running", "collectId": "...", "startedAt": 1711468800 }` | 已开始采集 |
+| `200 { "state": "running", "alreadyRunning": true, ... }` | 已有采集在跑，复用该轮 |
+| `404` / `405` | 不支持立即采集 |
+| `503` | 数据源尚未就绪 |
+
+`scope` 是建议值，采集端可以忽略：多数采集器只能整库采集，`scope` 只用于日志或未来的按范围实现。ChatLab 的按类型、按会话筛选作用在后续拉取阶段。
+
+### GET /collect
+
+```http
+GET {baseUrl}/collect
+Authorization: Bearer {token}
+```
+
+```json
+{ "state": "done", "changed": 12, "startedAt": 1711468800, "finishedAt": 1711468812 }
+```
+
+`state` 取值：`idle` / `running` / `done` / `failed` / `busy`。ChatLab 每 500ms 轮询一次，最长等待 5 分钟；超时或失败时仍会拉取已采集的数据，并在界面提示。
+
+### /health 扩展
+
+```json
+{
+  "ready": true,
+  "capabilities": ["collect"],
+  "refresh": { "state": "running", "startedAt": 1711468800 }
+}
+```
+
+---
+
 ## 可选：SSE 实时通知
 
 除定时轮询外，远程数据源可**可选**实现 SSE（Server-Sent Events）端点，用于**通知 ChatLab 有新数据可拉取**。

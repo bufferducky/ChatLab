@@ -7,13 +7,62 @@ import Database from 'better-sqlite3'
 import { CHAT_DB_SCHEMA, type PathProvider } from '@openchatlab/core'
 import { DatabaseManager } from '../../database-manager'
 import { createDatabaseManagerAdapter } from '../adapters'
-import { DEFAULT_TOPIC_AUTOMATION, isTopicAutomationTime } from './live'
+import { applyLiveTopicResponse, buildLiveTopicPrompt, DEFAULT_TOPIC_AUTOMATION, isTopicAutomationTime } from './live'
 import { createChatTopicService } from './service'
 import type { ChatTopicModelClient } from './model-client'
 import { ChatTopicStore } from './store'
 import { getChatTopicsDbPath } from './paths'
 
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
+
+test('the continuous response example can create a topic with a readable development', () => {
+  const raw = new Database(':memory:', { nativeBinding })
+  raw.exec(CHAT_DB_SCHEMA)
+  raw
+    .prepare(
+      "INSERT INTO meta (name, platform, type, imported_at, schema_version) VALUES ('Test', 'qq', 'group', 0, 10)"
+    )
+    .run()
+  raw.prepare("INSERT INTO member (id, platform_id, account_name) VALUES (1, 'alice', 'Alice')").run()
+  const message = {
+    id: 1,
+    timestamp: 1794630000,
+    senderName: 'Alice',
+    type: 0,
+    content: 'Login fails after the upgrade',
+  }
+  raw
+    .prepare('INSERT INTO message (id, sender_id, ts, type, content) VALUES (?, 1, ?, 0, ?)')
+    .run(message.id, message.timestamp, message.content)
+  const db = { prepare: (sql: string) => raw.prepare(sql), exec: (sql: string) => raw.exec(sql) } as any
+  const block = { index: 0, estimatedChars: 50, messages: [message] }
+  try {
+    const prompts = buildLiveTopicPrompt({
+      db,
+      sessionId: 'group',
+      settings: DEFAULT_TOPIC_AUTOMATION,
+      candidates: [],
+      block,
+      totalBlocks: 1,
+    })
+    const example = JSON.parse(prompts.userPrompt.match(/Example create item: (\{[^\n]+\})\./)![1]!)
+    example.evidence = [{ messageId: message.id, timestamp: message.timestamp, role: 'primary' }]
+    const result = applyLiveTopicResponse({
+      text: JSON.stringify({ operations: [example], assignments: [{ topicRef: example.localId, messageIds: [1] }] }),
+      sessionId: 'group',
+      settings: DEFAULT_TOPIC_AUTOMATION,
+      candidates: [],
+      block,
+      db,
+      now: Date.now(),
+    })
+    assert.equal(result.topics.length, 1)
+    assert.ok(result.topics[0]!.updates[0]!.text)
+    assert.equal(result.topics[0]!.version, 1)
+  } finally {
+    raw.close()
+  }
+})
 
 // These tests protect user-visible scheduling, catch-up, cross-day continuity and unread data.
 function harness(t: TestContext) {
@@ -45,6 +94,7 @@ function harness(t: TestContext) {
   let calls = 0
   let fail = false
   let repetition = false
+  let omitProgress = false
   let afterCall: (() => void) | null = null
   const model: ChatTopicModelClient = {
     modelId: 'test',
@@ -61,34 +111,34 @@ function harness(t: TestContext) {
       const callback = afterCall
       afterCall = null
       callback?.()
-      return {
-        inputTokens: 1,
-        outputTokens: 1,
-        text: JSON.stringify({
-          operations: existingId
-            ? [
-                {
-                  operation: 'append',
-                  topicId: existingId,
-                  summary: repetition ? 'Initial problem' : 'Configuration fixed; one user reports recovery',
-                  progress: repetition ? '' : 'A user reports recovery after changing the callback URL',
-                  evidence,
-                },
-              ]
-            : [
-                {
-                  operation: 'create',
-                  localId: 'login',
-                  title: 'Login failure',
-                  summary: 'Initial problem',
-                  progress: 'A login failure was reported',
-                  state: 'active',
-                  evidence,
-                },
-              ],
-          assignments: [{ topicRef: existingId ?? 'login', messageIds: messages.map((message) => message.messageId) }],
-        }),
+      const payload = {
+        operations: existingId
+          ? [
+              {
+                operation: 'append',
+                topicId: existingId,
+                summary: repetition ? 'Initial problem' : 'Configuration fixed; one user reports recovery',
+                progress: repetition ? '' : 'A user reports recovery after changing the callback URL',
+                evidence,
+              },
+            ]
+          : [
+              {
+                operation: 'create',
+                localId: 'login',
+                title: 'Login failure',
+                summary: 'Initial problem',
+                progress: 'A login failure was reported',
+                state: 'active',
+                evidence,
+              },
+            ],
+        assignments: [{ topicRef: existingId ?? 'login', messageIds: messages.map((message) => message.messageId) }],
       }
+      if (omitProgress) {
+        for (const operation of payload.operations) Reflect.deleteProperty(operation, 'progress')
+      }
+      return { inputTokens: 1, outputTokens: 1, text: JSON.stringify(payload) }
     },
   }
   const create = () =>
@@ -132,6 +182,9 @@ function harness(t: TestContext) {
     },
     repeat(value: boolean) {
       repetition = value
+    },
+    omitProgress(value: boolean) {
+      omitProgress = value
     },
     afterNextCall(callback: () => void) {
       afterCall = callback
@@ -239,7 +292,27 @@ test('repeated discussion updates membership without creating another unread dev
   assert.deepEqual(topic.messageIds, [1, 2])
 })
 
-test('failed updates retain the cursor, manual nighttime catch-up works, and older backfills use ingestion IDs', async (t) => {
+test('provider responses omitting progress retain grounded summaries and do not mark repetitions unread', async (t) => {
+  const h = harness(t)
+  h.omitProgress(true)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.service.noteSync('group')
+  await settle(h.service)
+  const original = h.service.getFeed('group').topics[0]!
+  assert.equal(original.updates[0]!.text, original.summary)
+  h.service.markRead('group', [{ id: original.id, version: original.version }])
+  h.repeat(true)
+  h.insert(2)
+  h.service.noteSync('group')
+  await settle(h.service)
+  const repeated = h.service.getFeed('group').topics[0]!
+  assert.equal(repeated.version, repeated.readVersion)
+  assert.equal(repeated.updates.length, 1)
+  assert.deepEqual(repeated.messageIds, [1, 2])
+})
+
+test('failed updates retain the cursor and seven-day backfills use ingestion IDs without processing older history', async (t) => {
   const h = harness(t)
   h.time('2026-11-13T10:00:00+08:00')
   h.insert(1)
@@ -251,13 +324,22 @@ test('failed updates retain the cursor, manual nighttime catch-up works, and old
   h.time('2026-11-13T23:50:00+08:00')
   h.service.updateFeed('group')
   await settle(h.service)
-  h.insert(2, Date.parse('2026-10-01T10:00:00+08:00') / 1000)
+  h.insert(2, Date.parse('2026-11-10T10:00:00+08:00') / 1000)
+  h.insert(3, Date.parse('2026-10-01T10:00:00+08:00') / 1000)
+  h.insert(4, 1)
   h.service.noteSync('group')
   assert.equal(h.service.getFeed('group').pendingMessages, 1)
   h.service.updateFeed('group')
   await settle(h.service)
   assert.equal(h.service.getFeed('group').pendingMessages, 0)
   assert.deepEqual(h.service.getFeed('group').topics[0]!.messageIds, [2, 1])
+  h.insert(5)
+  h.time('2026-11-21T10:00:00+08:00')
+  assert.equal(h.service.getFeed('group').pendingMessages, 0)
+  const calls = h.calls
+  assert.equal(h.service.updateFeed('group'), null)
+  assert.equal(h.calls, calls)
+  assert.equal(h.service.getFeed('group').topics.length, 1)
 })
 
 test('live tables are additive to existing daily data and session deletion clears derived live data', async (t) => {

@@ -11,8 +11,19 @@ import McpSettingsTab from './McpSettingsTab.vue'
 
 const { t, locale } = useI18n()
 const store = useApiServerStore()
-const { config, status, loading, isRunning, hasError, isPortInUse, dataSources, pullingIds, syncProgress, isWebMode } =
-  storeToRefs(store)
+const {
+  config,
+  status,
+  loading,
+  isRunning,
+  hasError,
+  isPortInUse,
+  dataSources,
+  pullingIds,
+  collectingIds,
+  syncProgress,
+  isWebMode,
+} = storeToRefs(store)
 
 const activeSubTab = ref('sync')
 const layoutStore = useLayoutStore()
@@ -211,11 +222,19 @@ async function removeSessionDeleteData() {
 }
 
 async function syncAllInSource(ds: DataSource) {
-  await store.triggerPullAll(ds.id)
+  await store.collectAndPull(ds.id)
+}
+
+async function syncTypeInSource(ds: DataSource, type: 'group' | 'private') {
+  await store.collectAndPull(ds.id, { type })
 }
 
 async function syncSession(ds: DataSource, sess: ImportSession) {
-  await store.triggerPull(ds.id, sess.id)
+  await store.collectAndPull(ds.id, { sessionIds: [sess.id] })
+}
+
+function isCollecting(ds: DataSource): boolean {
+  return collectingIds.value.has(ds.id)
 }
 
 function formatTime(ts: number): string {
@@ -266,6 +285,9 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                       <span v-if="!ds.enabled" class="text-xs text-gray-400">
                         ({{ t('settings.api.dataSources.disabled') }})
                       </span>
+                      <span v-if="isCollecting(ds)" class="text-xs text-blue-500">
+                        {{ t('settings.api.dataSources.collecting') }}...
+                      </span>
                     </div>
                     <div class="flex items-center gap-1">
                       <UButton size="xs" variant="ghost" @click="openEditSource(ds)">
@@ -283,6 +305,25 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                         size="xs"
                         variant="ghost"
                         :disabled="pullingIds.has(ds.id) || ds.sessions.some((s) => pullingIds.has(s.id))"
+                        :title="t('settings.api.dataSources.syncGroups')"
+                        @click="syncTypeInSource(ds, 'group')"
+                      >
+                        <UIcon name="i-heroicons-user-group" class="h-3.5 w-3.5" />
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        variant="ghost"
+                        :disabled="pullingIds.has(ds.id) || ds.sessions.some((s) => pullingIds.has(s.id))"
+                        :title="t('settings.api.dataSources.syncPrivates')"
+                        @click="syncTypeInSource(ds, 'private')"
+                      >
+                        <UIcon name="i-heroicons-user" class="h-3.5 w-3.5" />
+                      </UButton>
+                      <UButton
+                        size="xs"
+                        variant="ghost"
+                        :disabled="pullingIds.has(ds.id) || ds.sessions.some((s) => pullingIds.has(s.id))"
+                        :title="t('settings.api.dataSources.discovery.typeAll')"
                         @click="syncAllInSource(ds)"
                       >
                         <UIcon
@@ -353,7 +394,10 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                         </div>
                       </div>
                       <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                        <template v-if="syncProgress.get(sess.id)">
+                        <template v-if="isCollecting(ds)">
+                          <span class="text-blue-500">{{ t('settings.api.dataSources.collecting') }}...</span>
+                        </template>
+                        <template v-else-if="syncProgress.get(sess.id)">
                           <span class="text-blue-500">
                             {{ t('settings.api.dataSources.syncing') }}...
                             {{ syncProgress.get(sess.id)!.current }}

@@ -73,6 +73,27 @@ export interface RemoteSessionDiscoveryResult {
   page?: RemoteSessionDiscoveryPage
 }
 
+export type SessionTypeFilter = 'group' | 'private' | 'other'
+
+export interface CollectAndPullScope {
+  type?: SessionTypeFilter
+  sessionIds?: string[]
+}
+
+export interface CollectAndPullResult {
+  collect: {
+    supported: boolean
+    state: 'done' | 'failed' | 'busy' | 'timeout' | 'skipped'
+    changed: number
+    error?: string
+  }
+  pull: {
+    sessions: number
+    newMessages: number
+    errors: string[]
+  }
+}
+
 // ==================== Transport abstraction ====================
 
 interface ApiTransport {
@@ -102,6 +123,7 @@ interface ApiTransport {
   removeImportSession(sourceId: string, sessionId: string, deleteData?: boolean): Promise<boolean>
   triggerPull(sourceId: string, sessionId?: string): Promise<{ success: boolean; error?: string }>
   triggerPullAll(sourceId: string): Promise<{ success: boolean; error?: string }>
+  collectAndPull(sourceId: string, scope: CollectAndPullScope): Promise<CollectAndPullResult>
   onPullResult(cb: () => void): () => void
   fetchRemoteSessions(
     baseUrl: string,
@@ -129,6 +151,7 @@ function createElectronTransport(): ApiTransport {
       http.removeImportSession(sourceId, sessionId, deleteData),
     triggerPull: (sourceId, sessionId?) => http.triggerPull(sourceId, sessionId),
     triggerPullAll: (sourceId) => http.triggerPullAll(sourceId),
+    collectAndPull: (sourceId, scope) => http.collectAndPull(sourceId, scope),
     onPullResult: (cb) => http.onPullResult(cb),
     fetchRemoteSessions: (baseUrl, token?, query?) => http.fetchRemoteSessions(baseUrl, token, query),
   }
@@ -232,6 +255,13 @@ function createWebTransport(): ApiTransport {
 
     triggerPullAll: (sourceId) => fetchJson(`/_web/automation/data-sources/${sourceId}/pull-all`, { method: 'POST' }),
 
+    collectAndPull: (sourceId, scope) =>
+      fetchJson(`/_web/automation/data-sources/${sourceId}/collect-and-pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scope),
+      }),
+
     onPullResult: (cb) =>
       createSyncResultPoller({
         loadDataSources: () => fetchJson('/_web/automation/data-sources'),
@@ -278,6 +308,7 @@ export const useApiServerStore = defineStore('apiServer', () => {
   const loading = ref(false)
   const dataSources = ref<DataSource[]>([])
   const pullingIds = ref(new Set<string>())
+  const collectingIds = ref(new Set<string>())
   const syncProgress = ref<Map<string, { current: number; pages: number }>>(new Map())
   const available = computed(() => true)
 
@@ -448,13 +479,22 @@ export const useApiServerStore = defineStore('apiServer', () => {
   }
 
   async function fetchSyncProgress() {
-    if (!isWebMode.value) return
     try {
       const list = await fetchWithAuth('/_web/automation/sync-progress').then((r) => r.json())
       const map = new Map<string, { current: number; pages: number }>()
+      const syncingSessionIds = new Set<string>()
       for (const item of list as Array<{ sessionId: string; current: number; pages: number; done: boolean }>) {
-        if (!item.done) map.set(item.sessionId, { current: item.current, pages: item.pages })
+        if (!item.done) {
+          syncingSessionIds.add(item.sessionId)
+          map.set(item.sessionId, { current: item.current, pages: item.pages })
+        }
       }
+      for (const source of dataSources.value) {
+        if (source.sessions.some((session) => syncingSessionIds.has(session.id))) {
+          collectingIds.value.delete(source.id)
+        }
+      }
+      collectingIds.value = new Set(collectingIds.value)
       syncProgress.value = map
     } catch {
       /* ignore */
@@ -522,6 +562,37 @@ export const useApiServerStore = defineStore('apiServer', () => {
         syncProgress.value.delete(id)
       }
       pullingIds.value = new Set(pullingIds.value)
+      syncProgress.value = new Map(syncProgress.value)
+    }
+  }
+
+  async function collectAndPull(sourceId: string, scope: CollectAndPullScope = {}) {
+    const ds = dataSources.value.find((s) => s.id === sourceId)
+    const sessionIds = scope.sessionIds ?? ds?.sessions.map((s) => s.id) ?? []
+    const trackIds = new Set([sourceId, ...sessionIds])
+    for (const id of trackIds) pullingIds.value.add(id)
+    pullingIds.value = new Set(pullingIds.value)
+    collectingIds.value.add(sourceId)
+    collectingIds.value = new Set(collectingIds.value)
+    const progressTimer = startProgressPolling()
+    try {
+      const result = await transport.collectAndPull(sourceId, scope)
+      await fetchDataSources()
+      await useSessionStore().loadSessions()
+      generateIndexForSource(sourceId, scope.sessionIds?.length === 1 ? scope.sessionIds[0] : undefined)
+      return result
+    } catch (err) {
+      console.error('[ApiServerStore] Failed to collect and pull:', err)
+      return null
+    } finally {
+      clearInterval(progressTimer)
+      for (const id of trackIds) {
+        pullingIds.value.delete(id)
+        syncProgress.value.delete(id)
+      }
+      pullingIds.value = new Set(pullingIds.value)
+      collectingIds.value.delete(sourceId)
+      collectingIds.value = new Set(collectingIds.value)
       syncProgress.value = new Map(syncProgress.value)
     }
   }
@@ -598,6 +669,8 @@ export const useApiServerStore = defineStore('apiServer', () => {
     removeImportSession,
     triggerPull,
     triggerPullAll,
+    collectAndPull,
+    collectingIds,
     listenPullResult,
     fetchRemoteSessions,
   }
