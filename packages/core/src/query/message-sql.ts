@@ -19,6 +19,7 @@ export const FULL_MSG_COLUMNS = `
   msg.ts as timestamp,
   msg.type,
   msg.reply_to_message_id as replyToMessageId,
+  reply_msg.id as replyToInternalId,
   reply_msg.content as replyToContent,
   COALESCE(reply_m.group_nickname, reply_m.account_name, reply_m.platform_id) as replyToSenderName`
 
@@ -48,6 +49,7 @@ export interface FullMessageRow {
   timestamp: number
   type: number
   replyToMessageId: string | null
+  replyToInternalId: number | null
   replyToContent: string | null
   replyToSenderName: string | null
 }
@@ -63,6 +65,7 @@ export interface MappedMessage {
   timestamp: number
   type: number
   replyToMessageId: string | null
+  replyToInternalId: number | null
   replyToContent: string | null
   replyToSenderName: string | null
 }
@@ -89,6 +92,7 @@ export function mapMessageRow(row: FullMessageRow): MappedMessage {
     timestamp: Number(row.timestamp),
     type: Number(row.type),
     replyToMessageId: row.replyToMessageId || null,
+    replyToInternalId: row.replyToInternalId == null ? null : Number(row.replyToInternalId),
     replyToContent: row.replyToContent || null,
     replyToSenderName: row.replyToSenderName || null,
   }

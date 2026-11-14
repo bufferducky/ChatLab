@@ -1,6 +1,6 @@
 export type ChatTopicRangeKind = 'today' | 'year' | 'custom' | 'all'
 
-export type ChatTopicRunRangeKind = ChatTopicRangeKind | 'day'
+export type ChatTopicRunRangeKind = ChatTopicRangeKind | 'day' | 'updates'
 
 export type ChatTopicRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
@@ -105,4 +105,37 @@ export interface CreateChatTopicsRequest {
   timezone: string
   locale?: string
   startDay?: string
+}
+
+export interface ChatTopicAutomationSettings {
+  enabled: boolean
+  startTime: string
+  endTime: string
+  timezone: string
+  locale: string
+}
+
+export interface ChatTopicUpdate {
+  version: number
+  text: string
+  createdAt: number
+  evidence: ChatTopicEvidence[]
+}
+
+export interface ChatTopicFeedItem extends ChatTopic {
+  version: number
+  readVersion: number
+  updatedAt: number
+  updates: ChatTopicUpdate[]
+}
+
+export interface ChatTopicFeed {
+  settings: ChatTopicAutomationSettings
+  withinSchedule: boolean
+  modelConfigured: boolean
+  pendingMessages: number
+  syncedAt: number | null
+  processedAt: number | null
+  topics: ChatTopicFeedItem[]
+  run: ChatTopicRun | null
 }

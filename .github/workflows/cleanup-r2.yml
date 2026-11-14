@@ -30,6 +30,7 @@ env:
 
 jobs:
   cleanup:
+    if: github.repository == 'ChatLab/ChatLab'
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS CLI for R2

@@ -1,7 +1,31 @@
 import { fetchWithAuth } from '../utils/http'
 import type { ChatTopicDay, ChatTopicPreflight, ChatTopicRun, ChatTopicsAdapter } from './types'
+import type { ChatTopicAutomationSettings, ChatTopicFeed } from '@openchatlab/shared-types'
 
 export class FetchChatTopicsAdapter implements ChatTopicsAdapter {
+  getFeed(sessionId: string) {
+    return requestJson<ChatTopicFeed>(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/feed`)
+  }
+
+  setAutomation(sessionId: string, settings: ChatTopicAutomationSettings) {
+    return requestJson<ChatTopicFeed>(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/automation`, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  }
+
+  updateFeed(sessionId: string) {
+    return requestJson<ChatTopicRun | null>(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/feed/update`, {
+      method: 'POST',
+    })
+  }
+
+  async markRead(sessionId: string, topics: Array<{ id: string; version: number }>): Promise<void> {
+    await requestJson(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/feed/read`, {
+      method: 'POST',
+      body: JSON.stringify({ topics }),
+    })
+  }
   preflight(sessionId: string, request: Parameters<ChatTopicsAdapter['preflight']>[1]) {
     return requestJson<ChatTopicPreflight>(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/preflight`, {
       method: 'POST',

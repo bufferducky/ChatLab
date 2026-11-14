@@ -18,7 +18,13 @@
     "tryAdjustFilter": "フィルター条件を調整してみてください",
     "loadingMore": "さらに読み込み中...",
     "scrollUpForMore": "↑ 上にスクロールしてさらに読み込む",
-    "scrollDownForMore": "↓ 下にスクロールしてさらに読み込む"
+    "scrollDownForMore": "↓ 下にスクロールしてさらに読み込む",
+    "highlightingSender": "強調表示中：{name}",
+    "clearSenderHighlight": "強調を解除",
+    "senderPosition": "この範囲 {current} / {total} 件",
+    "senderNavigation": "このメンバーの発言を移動",
+    "previousSenderMessage": "前の発言",
+    "nextSenderMessage": "次の発言"
   },
   "filter": {
     "messageId": "メッセージ ID",
@@ -130,13 +136,57 @@
     "topicState": {
       "active": "進行中",
       "closed": "一区切り"
+    },
+    "feed": {
+      "views": "トピック表示",
+      "updates": "最近の更新",
+      "all": "すべて",
+      "day": "日別",
+      "settings": "自動要約の設定",
+      "schedule": "自動要約 {start}–{end} · {timezone}",
+      "syncedAt": "最終同期：{time}",
+      "processedAt": "最終整理：{time}",
+      "pending": "未整理のメッセージ {count} 件",
+      "enable": "自動要約",
+      "startTime": "開始時刻",
+      "endTime": "終了時刻",
+      "timezone": "タイムゾーン",
+      "scheduleHint": "時間外もメッセージの同期を続け、AI 要約のみ停止します。開始時刻にまとめて処理します。初回は直近7日間が対象です。過去の履歴は一括要約で確認できます。",
+      "save": "設定を保存",
+      "updateNow": "今すぐ更新",
+      "markShownRead": "表示中のトピックを既読にする",
+      "retry": "再試行",
+      "search": "トピックや要約を検索",
+      "filterDate": "議論の日付で絞り込む",
+      "unreadCount": "未読の更新があるトピック {count} 件",
+      "noUpdates": "未読の重要な更新はありません",
+      "noTopics": "一致するトピックはありません",
+      "emptyHint": "新しいトピックや進展は整理が完了すると表示されます。",
+      "newTopic": "新規",
+      "newProgress": "新しい進展",
+      "messageCount": "関連メッセージ {count} 件",
+      "sinceRead": "前回の閲覧以降の進展",
+      "currentSummary": "現在の要約",
+      "viewOriginal": "元のメッセージを見る",
+      "markRead": "既読にする",
+      "showMore": "さらに表示",
+      "noModel": "先に高速モデルを設定してください",
+      "processing": "最新メッセージを整理中",
+      "disabled": "自動要約はオフです",
+      "sleeping": "自動要約は時間外のため停止中",
+      "waiting": "新しいメッセージの整理待ち",
+      "caughtUp": "未処理のメッセージはありません"
     }
   },
   "messageItem": {
     "viewContext": "コンテキストを表示",
     "replyTo": "返信",
     "expandMessyContent": "全文を表示",
-    "collapseMessyContent": "折りたたむ"
+    "collapseMessyContent": "折りたたむ",
+    "highlightSender": "{name} の発言を強調表示",
+    "unhighlightSender": "{name} の発言の強調を解除",
+    "jumpToOriginal": "元のメッセージへ移動",
+    "originalNotImported": "元のメッセージが未インポートのため移動できません"
   },
   "images": {
     "image": "画像",
@@ -163,7 +213,10 @@
       "QQ_OFFLINE": "QQ が未ログインまたはオフラインです。ログインして再試行してください。",
       "QQ_BRIDGE_INCOMPATIBLE": "この QQ バージョンは画像ブリッジに対応していません",
       "QQ_DOWNLOAD_TIMEOUT": "画像のダウンロードがタイムアウトしました。再試行してください。",
-      "IMAGE_SOURCE_UNAVAILABLE": "画像データソースを一時的に利用できません"
-    }
+      "IMAGE_SOURCE_UNAVAILABLE": "画像データソースを一時的に利用できません",
+      "IMAGE_RATE_LIMITED": "Telegram の制限に達しました。後でもう一度お試しください。",
+      "IMAGE_TIMEOUT": "画像の読み込みがタイムアウトしました。"
+    },
+    "retryIn": "制限中です。{seconds} 秒後に再試行します。"
   }
 }

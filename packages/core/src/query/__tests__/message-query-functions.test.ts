@@ -128,6 +128,35 @@ describe('message pagination', () => {
 })
 
 describe('message search and context', () => {
+  it('resolves reply navigation to local IDs and preserves missing-original previews', async () => {
+    const db = createMessageDb()
+    try {
+      // Numeric platform IDs must never be mistaken for local row IDs.
+      db.exec(`UPDATE message SET platform_message_id = '9007199254740993' WHERE id = 1;
+        UPDATE message SET reply_to_message_id = '9007199254740993' WHERE id = 3;
+        UPDATE message SET reply_to_message_id = 'not-imported' WHERE id = 5;`)
+      const adapter = new SqliteTestAdapter(db)
+      const executor = createSqliteExecutor(db)
+      for (const messages of [
+        getMessageContext(adapter, [3, 5], 0),
+        await fetchMessageContext(executor, [3, 5], 0),
+        (await fetchAllRecentMessages(executor)).messages,
+        (await searchMessagesLikeAsync(executor, ['hello project', 'hi'])).messages,
+      ]) {
+        const reply = messages.find((message) => message.id === 3)!
+        assert.equal(reply.replyToMessageId, '9007199254740993')
+        assert.equal(reply.replyToInternalId, 1)
+        assert.equal(reply.replyToContent, 'hello')
+        assert.equal(reply.replyToSenderName, 'A')
+        const missingReply = messages.find((message) => message.id === 5)!
+        assert.equal(missingReply.replyToMessageId, 'not-imported')
+        assert.equal(missingReply.replyToInternalId, null)
+      }
+    } finally {
+      db.close()
+    }
+  })
+
   // Prevent common-keyword searches in busy segments from blocking the database for seconds.
   for (const indexed of [true, false]) {
     it(`expands many hits without repeated scans (indexed=${indexed})`, async () => {

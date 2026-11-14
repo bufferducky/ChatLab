@@ -150,3 +150,97 @@ test('controlled collector errors preserve their business code and retryability'
     )
   })
 })
+
+test('shared readers cancel independently and the final cancellation reaches the collector', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'chatlab-images-cancel-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const input = await sharp({ create: { width: 10, height: 10, channels: 3, background: '#ffffff' } })
+    .png()
+    .toBuffer()
+  let release: () => void = () => {}
+  let started: () => void = () => {}
+  let ready = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const remoteRequests: Array<{ id: string; signal: AbortSignal }> = []
+  const cancellations: string[] = []
+  const service = new MessageImagesService({
+    cache: new MessageImageCache(dir),
+    resolveMessage: (_session, messageId) => ({ platform: 'telegram', platformMessageId: String(messageId) }),
+    loadSources: () => [
+      {
+        id: 'tg',
+        baseUrl: 'http://localhost/api/v1',
+        token: 'secret',
+        sessions: [{ targetSessionId: 'local', remoteSessionId: 'tg-peer' }],
+      },
+    ],
+    fetch: async (url, init) => {
+      assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer secret')
+      if (init?.method === 'DELETE') {
+        cancellations.push(String(url))
+        return Response.json({ cancelled: true })
+      }
+      if (String(url).endsWith('image-capabilities'))
+        return Response.json({}, { headers: { 'X-Image-Cancel-Protocol': '1' } })
+      assert.ok(init?.signal)
+      remoteRequests.push({ id: new Headers(init.headers).get('X-Image-Request-Id')!, signal: init.signal })
+      await new Promise<void>((resolve, reject) => {
+        release = resolve
+        init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+        started()
+      })
+      return new Response(Uint8Array.from(input), { headers: { 'X-Image-Cancel-Protocol': '1' } })
+    },
+  })
+  const first = new AbortController()
+  const second = new AbortController()
+  const a = service.image('local', 1, 0, 'preview', first.signal)
+  const b = service.image('local', 1, 0, 'preview', second.signal)
+  const rejected = assert.rejects(a, { name: 'AbortError' })
+  await ready
+  // Allow both cache reads to join the shared request before removing one reader.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  first.abort()
+  await rejected
+  assert.equal(remoteRequests[0].signal.aborted, false)
+  release()
+  assert.equal((await b).mime, 'image/webp')
+  assert.equal(remoteRequests.length, 1)
+  assert.equal(cancellations.length, 0)
+
+  const last = new AbortController()
+  ready = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const abandoned = service.image('local', 2, 0, 'original', last.signal)
+  const cancelled = assert.rejects(abandoned, { name: 'AbortError' })
+  await ready
+  last.abort()
+  await cancelled
+  assert.equal(remoteRequests[1].signal.aborted, true)
+  assert.equal(cancellations[0], `http://localhost/api/v1/image-requests/${remoteRequests[1].id}`)
+})
+
+test('server Retry-After is preserved even if the response body is not JSON', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'chatlab-images-cooldown-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const service = new MessageImagesService({
+    cache: new MessageImageCache(dir),
+    resolveMessage: () => ({ platform: 'telegram', platformMessageId: '1' }),
+    loadSources: () => [
+      {
+        id: 'tg',
+        baseUrl: 'http://localhost/api/v1',
+        token: '',
+        sessions: [{ targetSessionId: 'local', remoteSessionId: 'tg-peer' }],
+      },
+    ],
+    fetch: async () => new Response('Rate limited', { status: 429, headers: { 'Retry-After': '41' } }),
+  })
+  await assert.rejects(service.image('local', 1, 0, 'original'), {
+    code: 'IMAGE_RATE_LIMITED',
+    retryAfterSeconds: 41,
+    retryable: true,
+  })
+})

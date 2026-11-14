@@ -18,7 +18,13 @@
     "tryAdjustFilter": "嘗試調整篩選條件",
     "loadingMore": "載入更多...",
     "scrollUpForMore": "↑ 向上捲動載入更多",
-    "scrollDownForMore": "↓ 向下捲動載入更多"
+    "scrollDownForMore": "↓ 向下捲動載入更多",
+    "highlightingSender": "正在突顯：{name}",
+    "clearSenderHighlight": "取消突顯",
+    "senderPosition": "本段 {current} / {total} 則",
+    "senderNavigation": "瀏覽此成員的發言",
+    "previousSenderMessage": "上一則",
+    "nextSenderMessage": "下一則"
   },
   "filter": {
     "messageId": "訊息 ID",
@@ -130,13 +136,57 @@
     "topicState": {
       "active": "進行中",
       "closed": "已告一段落"
+    },
+    "feed": {
+      "views": "話題檢視",
+      "updates": "最近更新",
+      "all": "全部話題",
+      "day": "按日瀏覽",
+      "settings": "自動總結設定",
+      "schedule": "自動總結 {start}–{end} · {timezone}",
+      "syncedAt": "最近同步：{time}",
+      "processedAt": "最近整理：{time}",
+      "pending": "待整理 {count} 則訊息",
+      "enable": "自動總結",
+      "startTime": "開始時間",
+      "endTime": "結束時間",
+      "timezone": "時區",
+      "scheduleHint": "時段外繼續擷取訊息，暫停 AI 總結；進入時段後合併補齊。首次整理最近 7 天，完整歷史可透過批次總結查看。",
+      "save": "儲存設定",
+      "updateNow": "立即更新",
+      "markShownRead": "目前清單標為已讀",
+      "retry": "重試",
+      "search": "搜尋話題或歸納",
+      "filterDate": "篩選有討論的日期",
+      "unreadCount": "{count} 個話題有未讀更新",
+      "noUpdates": "暫無未讀的重要更新",
+      "noTopics": "暫無符合的話題",
+      "emptyHint": "新話題與後續進展會在整理完成後出現在這裡。",
+      "newTopic": "新話題",
+      "newProgress": "新進展",
+      "messageCount": "{count} 則相關訊息",
+      "sinceRead": "自上次閱讀後的進展",
+      "currentSummary": "目前歸納",
+      "viewOriginal": "查看原文",
+      "markRead": "標為已讀",
+      "showMore": "顯示更多",
+      "noModel": "請先設定快捷模型",
+      "processing": "正在整理最新訊息",
+      "disabled": "自動總結已關閉",
+      "sleeping": "自動總結已暫停，時段內繼續",
+      "waiting": "等待整理新訊息",
+      "caughtUp": "待處理訊息已整理完成"
     }
   },
   "messageItem": {
     "viewContext": "檢視上下文",
     "replyTo": "回覆",
     "expandMessyContent": "展開完整內容",
-    "collapseMessyContent": "收起"
+    "collapseMessyContent": "收起",
+    "highlightSender": "突顯 {name} 的發言",
+    "unhighlightSender": "取消突顯 {name} 的發言",
+    "jumpToOriginal": "跳至原訊息",
+    "originalNotImported": "原訊息尚未匯入，暫時無法定位"
   },
   "images": {
     "image": "圖片",
@@ -163,7 +213,10 @@
       "QQ_OFFLINE": "QQ 未登入或已離線，請登入後重試",
       "QQ_BRIDGE_INCOMPATIBLE": "目前 QQ 版本與取圖橋接不相容",
       "QQ_DOWNLOAD_TIMEOUT": "圖片下載逾時，請重試",
-      "IMAGE_SOURCE_UNAVAILABLE": "圖片資料來源暫時無法使用"
-    }
+      "IMAGE_SOURCE_UNAVAILABLE": "圖片資料來源暫時無法使用",
+      "IMAGE_RATE_LIMITED": "Telegram 請求受限，稍後重試",
+      "IMAGE_TIMEOUT": "圖片載入逾時，請重試"
+    },
+    "retryIn": "請求受限，{seconds} 秒後自動重試"
   }
 }

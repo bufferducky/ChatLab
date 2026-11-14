@@ -13,6 +13,7 @@ import type { ChatRecordMessage, ChatRecordQuery } from './types'
 import { useSessionStore } from '@/stores/session'
 import { useMessageService } from '@/services'
 import { resolveChatRecordSessionId } from './query-session'
+import { getSenderColor, isSenderContinuation } from './sender-presentation'
 
 // 时间分隔阈值（秒）：消息间隔超过此值则显示时间分隔线
 const TIME_SEPARATOR_THRESHOLD = 5 * 60 // 5 分钟
@@ -57,6 +58,32 @@ const emit = defineEmits<{
 
 const sessionStore = useSessionStore()
 const effectiveSessionId = computed(() => resolveChatRecordSessionId(props.query, sessionStore.currentSessionId))
+const focusedSender = ref<{ id: string; name: string } | null>(null)
+const focusedMessageId = ref<number | null>(null)
+const navigationMessageId = ref<number | null>(null)
+let navigationHighlightTimer: ReturnType<typeof setTimeout> | null = null
+const focusedSenderColor = computed(() =>
+  getSenderColor(sessionStore.currentSession?.platform ?? '', focusedSender.value?.id ?? '')
+)
+
+function toggleSenderFocus(message: ChatRecordMessage) {
+  if (!message.senderPlatformId) return
+  focusedSender.value =
+    focusedSender.value?.id === message.senderPlatformId
+      ? null
+      : { id: message.senderPlatformId, name: message.senderName }
+  focusedMessageId.value = focusedSender.value ? message.id : null
+}
+
+function clearSenderFocus() {
+  focusedSender.value = null
+  focusedMessageId.value = null
+}
+
+watch(effectiveSessionId, () => {
+  clearSenderFocus()
+  clearNavigationHighlight()
+})
 
 // 判断是否使用外部传入的消息
 const isExternalMode = computed(() => !!props.externalMessages?.length)
@@ -73,6 +100,12 @@ const isFiltered = computed(() => {
 
 // 消息列表
 const messages = ref<ChatRecordMessage[]>([])
+const focusedMessages = computed(() =>
+  focusedSender.value ? messages.value.filter((message) => message.senderPlatformId === focusedSender.value!.id) : []
+)
+const focusedMessagePosition = computed(() =>
+  focusedMessages.value.findIndex((message) => message.id === focusedMessageId.value)
+)
 const highlightedTopicMessageIds = computed(() => new Set(props.highlightTopic?.messageIds ?? []))
 const isLoading = ref(false)
 const isLoadingMore = ref(false)
@@ -133,6 +166,7 @@ let previousExternalMessageCount = 0
 
 // 初始加载消息
 async function loadInitialMessages() {
+  clearNavigationHighlight()
   // 外部模式：直接使用外部消息
   if (isExternalMode.value) {
     const currentCount = props.externalMessages!.length
@@ -395,6 +429,31 @@ function scrollToMessage(messageId: number) {
   const index = messages.value.findIndex((m) => m.id === messageId)
   if (index !== -1) {
     virtualizer.value.scrollToIndex(index, { align: 'center' })
+    clearNavigationHighlight()
+    navigationMessageId.value = messageId
+    navigationHighlightTimer = setTimeout(clearNavigationHighlight, 2500)
+  }
+}
+
+function clearNavigationHighlight() {
+  if (navigationHighlightTimer) clearTimeout(navigationHighlightTimer)
+  navigationHighlightTimer = null
+  navigationMessageId.value = null
+}
+
+function navigateSender(direction: -1 | 1) {
+  const message = focusedMessages.value[focusedMessagePosition.value + direction]
+  if (!message) return
+  focusedMessageId.value = message.id
+  scrollToMessage(message.id)
+}
+
+function jumpToReply(messageId: number) {
+  if (messages.value.some((message) => message.id === messageId)) {
+    scrollToMessage(messageId)
+  } else {
+    // The workspace clears search/time filters to include the original and its context.
+    emit('jump-to-message', messageId)
   }
 }
 
@@ -466,12 +525,13 @@ function updateVisibleMessage() {
 
 // 判断是否是目标消息（高亮显示）
 function isTargetMessage(message: ChatRecordMessage): boolean {
+  if (message.id === navigationMessageId.value) return true
   if (isTopicMessage(message)) return true
   // 外部模式：检查是否在命中列表中
   if (isExternalMode.value && props.hitMessageIds?.length) {
     return props.hitMessageIds.includes(message.id)
   }
-  return message.id === props.query.scrollToMessageId
+  return false
 }
 
 function isTopicMessage(message: ChatRecordMessage): boolean {
@@ -516,22 +576,35 @@ function getTimeSeparator(index: number): string | null {
 
   // 跨天或间隔超过阈值时显示时间分隔线
   if (isDifferentDay || gap >= TIME_SEPARATOR_THRESHOLD) {
-    return formatSeparatorTime(currentTs)
+    return formatSeparatorTime(currentTs, isDifferentDay)
   }
 
   return null
 }
+
+const senderContinuations = computed(() => {
+  // Search and external result sets can omit intervening speakers.
+  if (isFiltered.value || isExternalMode.value) return []
+  let groupLength = 0
+  return messages.value.map((message, index) => {
+    // Repeat identity in long runs so scrolling never leaves many anonymous bubbles.
+    const continues =
+      groupLength < 5 && !getTimeSeparator(index) && isSenderContinuation(messages.value[index - 1], message)
+    groupLength = continues ? groupLength + 1 : 1
+    return continues
+  })
+})
 
 /**
  * 格式化时间分隔线的时间显示
  * - 当天消息：HH:mm
  * - 非当天消息：YYYY-MM-DD HH:mm
  */
-function formatSeparatorTime(timestamp: number): string {
+function formatSeparatorTime(timestamp: number, showDate = false): string {
   const msgTime = dayjs.unix(timestamp)
   const today = dayjs().startOf('day')
 
-  if (msgTime.isSame(today, 'day')) {
+  if (!showDate && msgTime.isSame(today, 'day')) {
     return msgTime.format('HH:mm')
   }
   return msgTime.format('YYYY-MM-DD HH:mm')
@@ -568,6 +641,7 @@ watch(
 
 // 清理定时器
 onUnmounted(() => {
+  clearNavigationHighlight()
   if (visibleMessageTimer) {
     clearTimeout(visibleMessageTimer)
     visibleMessageTimer = null
@@ -583,6 +657,53 @@ defineExpose({
 
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-chat-bg dark:bg-chat-dark">
+    <div
+      v-if="focusedSender"
+      class="flex shrink-0 flex-col gap-1 border-b border-chat-divider px-4 py-2 text-xs dark:border-white/10"
+    >
+      <div class="flex min-w-0 items-center justify-between gap-2" role="status">
+        <span class="min-w-0 truncate font-medium" :class="focusedSenderColor.text" :title="focusedSender.name">
+          {{ t('records.messageList.highlightingSender', { name: focusedSender.name }) }}
+        </span>
+        <span class="shrink-0 tabular-nums text-gray-500 dark:text-gray-400">
+          {{
+            t('records.messageList.senderPosition', {
+              current: focusedMessagePosition + 1,
+              total: focusedMessages.length,
+            })
+          }}
+        </span>
+      </div>
+      <div
+        class="flex shrink-0 items-center justify-end gap-1"
+        role="group"
+        :aria-label="t('records.messageList.senderNavigation')"
+      >
+        <button
+          type="button"
+          class="min-h-6 rounded px-2 py-1 font-medium text-gray-600 enabled:cursor-pointer enabled:hover:bg-gray-200/70 focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-40 dark:text-gray-300 dark:enabled:hover:bg-white/10"
+          :disabled="focusedMessagePosition <= 0"
+          @click="navigateSender(-1)"
+        >
+          {{ t('records.messageList.previousSenderMessage') }}
+        </button>
+        <button
+          type="button"
+          class="min-h-6 rounded px-2 py-1 font-medium text-gray-600 enabled:cursor-pointer enabled:hover:bg-gray-200/70 focus-visible:outline-2 focus-visible:outline-primary-500 disabled:opacity-40 dark:text-gray-300 dark:enabled:hover:bg-white/10"
+          :disabled="focusedMessagePosition >= focusedMessages.length - 1"
+          @click="navigateSender(1)"
+        >
+          {{ t('records.messageList.nextSenderMessage') }}
+        </button>
+        <button
+          type="button"
+          class="min-h-6 rounded px-2 py-1 font-medium text-gray-600 hover:bg-gray-200/70 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-gray-300 dark:hover:bg-white/10 cursor-pointer"
+          @click="clearSenderFocus"
+        >
+          {{ t('records.messageList.clearSenderHighlight') }}
+        </button>
+      </div>
+    </div>
     <!-- 加载中 -->
     <div v-if="isLoading" class="flex h-full items-center justify-center">
       <div class="text-center">
@@ -604,7 +725,7 @@ defineExpose({
     <div
       v-else
       ref="scrollContainerRef"
-      class="h-full overflow-y-auto"
+      class="min-h-0 flex-1 overflow-y-auto"
       data-testid="chat-record-message-scroller"
       @scroll="handleScroll"
     >
@@ -635,7 +756,7 @@ defineExpose({
             class="flex items-center justify-center py-2 transition-colors duration-300"
             :class="topicSeparatorHighlightClass(virtualItem.index)"
           >
-            <div class="flex items-center gap-2 text-xs text-gray-400">
+            <div class="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
               <div class="h-px w-8 bg-gray-200 dark:bg-gray-700" />
               <span>{{ getTimeSeparator(virtualItem.index) }}</span>
               <div class="h-px w-8 bg-gray-200 dark:bg-gray-700" />
@@ -647,10 +768,18 @@ defineExpose({
             :data-message-id="messages[virtualItem.index]?.id"
             :message="messages[virtualItem.index]!"
             :is-target="isTargetMessage(messages[virtualItem.index]!)"
-            :topic-color-index="isTopicMessage(messages[virtualItem.index]!) ? highlightTopic?.colorIndex : undefined"
+            :topic-color-index="
+              messages[virtualItem.index]!.id !== navigationMessageId && isTopicMessage(messages[virtualItem.index]!)
+                ? highlightTopic?.colorIndex
+                : undefined
+            "
             :highlight-keywords="query.highlightKeywords"
             :is-filtered="isFiltered"
+            :is-continuation="senderContinuations[virtualItem.index]"
+            :is-sender-focused="focusedSender?.id === messages[virtualItem.index]!.senderPlatformId"
             @view-context="(id) => emit('jump-to-message', id)"
+            @focus-sender="toggleSenderFocus"
+            @jump-to-reply="jumpToReply"
           />
         </div>
       </div>

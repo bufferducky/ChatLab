@@ -284,6 +284,10 @@ export type ChartAutoMode = 'explicit' | 'suggest' | 'aggressive'
 
 export type {
   ChatTopic,
+  ChatTopicAutomationSettings,
+  ChatTopicUpdate,
+  ChatTopicFeedItem,
+  ChatTopicFeed,
   ChatTopicAssignmentMode,
   ChatTopicDay,
   ChatTopicDayStatus,

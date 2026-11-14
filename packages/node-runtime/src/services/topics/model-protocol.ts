@@ -88,7 +88,15 @@ export function parseTopicOperationsResponse(text: string): TopicModelBlockRespo
     throw new Error('Invalid topic assignments payload')
   }
   return {
-    operations: payload.operations.map(parseOperation),
+    operations: payload.operations.map((value) => {
+      const operation = parseOperation(value)
+      if (isRecord(value) && value.progress !== undefined) {
+        if (typeof value.progress !== 'string' || value.progress.length > 1000)
+          throw new Error('Invalid topic progress')
+        operation.progress = value.progress.trim()
+      }
+      return operation
+    }),
     assignments: payload.assignments.map(parseAssignment),
   }
 }

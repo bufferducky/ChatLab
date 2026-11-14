@@ -149,6 +149,28 @@ function createEngine(options: {
 }
 
 describe('PullEngine', () => {
+  it('publishes successful idle pulls for pending catch-up and supports unsubscribing listeners', async () => {
+    const session = createSession()
+    const dataSource = { ...createDataSource(), sessions: [session] }
+    const payload = { messages: [], sync: { hasMore: false, nextSince: 100 } }
+    const engine = createEngine({
+      files: [writeTempJson(payload), writeTempJson(payload)],
+      dataSource,
+      importResult: { success: true, newMessageCount: 0 },
+    })
+    const notifications: string[] = []
+    const unsubscribe = engine.subscribeSessionImported((id) => notifications.push(id))
+    engine.subscribeSessionImported(() => {
+      throw new Error('Post-import side effect failed')
+    })
+    const first = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    assert.equal(first.success, true)
+    assert.deepEqual(notifications, [session.targetSessionId])
+    unsubscribe()
+    const second = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    assert.equal(second.success, true)
+    assert.deepEqual(notifications, [session.targetSessionId])
+  })
   it('finishes an idle incremental chat in one request without import or retries', async () => {
     const session = createSession()
     const source = createDataSource()

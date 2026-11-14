@@ -1,5 +1,64 @@
 [
   {
+    "version": "0.38.0",
+    "date": "2026-11-14",
+    "summary": "Improve conversation reading, continuous topics and local image delivery, with verified personal GitHub releases for macOS and Windows.",
+    "changes": [
+      {
+        "type": "feat",
+        "items": [
+          {
+            "text": "Add stable sender colors, grouped consecutive messages, reply navigation and previous/next sender-message navigation."
+          },
+          {
+            "text": "Schedule topic organization per conversation, continue discussions across days, and track progress, evidence and unread versions alongside daily history."
+          },
+          {
+            "text": "Extend group highlights with reading, save, skip and feedback actions, model usage, budgets and source navigation."
+          }
+        ]
+      },
+      {
+        "type": "perf",
+        "items": [
+          {
+            "text": "Separate Telegram history pacing from media scheduling; prioritize original clicks and visible previews while background downloads yield between chunks."
+          },
+          {
+            "text": "Coalesce and promote image downloads, cancel abandoned readers and honor server cooldowns; cached previews and originals remain available offline."
+          }
+        ]
+      },
+      {
+        "type": "fix",
+        "items": [
+          {
+            "text": "Keep native search identifiers out of QQ message bodies and resolve replies within their conversation without changing stable message IDs."
+          },
+          {
+            "text": "Bound QQ bridge queues and verify completion events, image resources and shutdown cleanup for multi-image reading."
+          }
+        ]
+      },
+      {
+        "type": "docs",
+        "items": [
+          {
+            "text": "Replace upstream-only README content with personal project setup and installation guidance; anonymize public samples and unpublished commit identity."
+          }
+        ]
+      },
+      {
+        "type": "ci",
+        "items": [
+          {
+            "text": "Build macOS Apple Silicon and Windows x64 installers from version tags; publish detailed notes, source identity and checksums only after redownloading and verifying the draft."
+          }
+        ]
+      }
+    ]
+  },
+  {
     "version": "0.37.7",
     "date": "2026-10-30",
     "summary": "Fix Discord direct message detection and repeat-import matching, and improve MCP read-only queries and safety checks.",

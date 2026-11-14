@@ -10,12 +10,14 @@ import fcntl
 import getpass
 import hmac
 import json
+import math
 import os
 import signal
 import sqlite3
 import tempfile
 import threading
 import time
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +25,45 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 DEFAULT_HOME = Path.home() / ".local/share/chatlab-telegram"
 BATCH_SIZE = 500
+_collection_metrics = ContextVar("telegram_collection_metrics", default=None)
+
+
+@contextlib.contextmanager
+def measure_collection():
+    """Attribute RPC waits to collection, excluding concurrent image tasks."""
+    metrics = {
+        "startedAt": int(time.time()),
+        "scannedDialogs": 0,
+        "skippedDialogs": 0,
+        "rpcCalls": {},
+        "pacingWaitSeconds": 0.0,
+        "floodWaitEvents": 0,
+        "floodWaitRequestedSeconds": 0,
+    }
+    token = _collection_metrics.set(metrics)
+    started = time.monotonic()
+    error_type = ""
+    try:
+        yield metrics
+    except BaseException as error:
+        error_type = type(error).__name__
+        raise
+    finally:
+        _collection_metrics.reset(token)
+        print(
+            json.dumps(
+                {
+                    "event": "telegramCollection",
+                    **{
+                        key: round(value, 3) if isinstance(value, float) else value
+                        for key, value in metrics.items()
+                    },
+                    "totalSeconds": round(time.monotonic() - started, 3),
+                    "error": error_type,
+                }
+            ),
+            flush=True,
+        )
 
 
 def private_json(path, value):
@@ -54,43 +95,121 @@ def make_client(root, config):
 
     cache = Cache(root)
 
+    from media_scheduler import MediaRateLimited, MediaScheduler, media_job
+
     class PacedClient(TelegramClient):
-        """Pace RPCs across iterators and resume the same RPC after FLOOD_WAIT."""
+        """Separate history pacing from account-wide media RPC admission."""
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._request_gate = asyncio.Lock()
-            remaining = max(0, cache.status()["retryAfter"] - time.time())
-            self._next_request_at = time.monotonic() + remaining if remaining else 0
+            self._connection_gate = asyncio.Lock()
+            self._next_request_at = 0
+            self.media_scheduler = MediaScheduler(cache)
+            self._app_config_at = 0
+
+        async def connect(self):
+            async with self._connection_gate:
+                if not self.is_connected():
+                    await super().connect()
+
+        async def ensure_media_connection(self):
+            from telethon import functions, types
+
+            async with self._connection_gate:
+                if not self.is_connected():
+                    await super().connect()
+                if time.monotonic() < self._app_config_at:
+                    return
+                self.media_scheduler.check_cooldown()
+
+                def decode(value):
+                    if isinstance(value, types.JsonObject):
+                        return {v.key: decode(v.value) for v in value.value}
+                    return getattr(value, "value", None)
+
+                try:
+                    result = await self(functions.help.GetAppConfigRequest(hash=0))
+                    values = decode(result.config)
+                    self.media_scheduler.configure(
+                        values.get("small_queue_max_active_operations_count"),
+                        values.get("large_queue_max_active_operations_count"),
+                    )
+                    self._app_config_at = time.monotonic() + 3600
+                except MediaRateLimited:
+                    raise
+                except (
+                    OSError,
+                    TimeoutError,
+                    errors.RPCError,
+                    AttributeError,
+                    TypeError,
+                ):
+                    # One-at-a-time is the fallback until configuration is available.
+                    self._app_config_at = time.monotonic() + 60
+
+        async def _get_cdn_client(self, redirect):
+            client = await super()._get_cdn_client(redirect)
+            client.media_scheduler = self.media_scheduler
+            client.flood_sleep_threshold = 0
+            return client
 
         async def _call(self, *args, **kwargs):
+            request = args[1] if len(args) > 1 else kwargs.get("request")
+            requests = request if isinstance(request, (list, tuple)) else [request]
+            media = media_job.get() is not None or any(
+                type(r).__module__.endswith(".upload") for r in requests
+            )
+            metrics = _collection_metrics.get()
             while True:
-                # Release the gate before Telethon resolves entities: resolution
-                # may issue a nested RPC on this client.
-                async with self._request_gate:
-                    while (delay := self._next_request_at - time.monotonic()) > 0:
-                        await asyncio.sleep(delay)
-                    self._next_request_at = time.monotonic() + max(
-                        0, config.get("requestWaitSeconds", 3)
-                    )
+                started = time.monotonic()
+                if media:
+                    self.media_scheduler.check_cooldown()
+                else:
+                    # No media request holds or waits for the history gate.
+                    async with self._request_gate:
+                        while (
+                            remaining := max(
+                                self._next_request_at - time.monotonic(),
+                                cache.status()["retryAfter"] - time.time(),
+                            )
+                        ) > 0:
+                            await asyncio.sleep(remaining)
+                        self._next_request_at = time.monotonic() + max(
+                            0, config.get("requestWaitSeconds", 3)
+                        )
+                if metrics is not None:
+                    metrics["pacingWaitSeconds"] += time.monotonic() - started
+                    kind = type(request).__name__
+                    metrics["rpcCalls"][kind] = metrics["rpcCalls"].get(kind, 0) + 1
                 try:
+                    if media:
+                        async with self.media_scheduler.rpc():
+                            return await super()._call(*args, **kwargs)
                     return await super()._call(*args, **kwargs)
-                except errors.FloodWaitError as error:
+                except (errors.FloodWaitError, errors.FloodPremiumWaitError) as error:
                     seconds = max(1, error.seconds)
-                    self._next_request_at = max(
-                        self._next_request_at, time.monotonic() + seconds
-                    )
                     cache.record_rate_limit(seconds)
+                    await self.media_scheduler.changed()
+                    if metrics is not None:
+                        metrics["floodWaitEvents"] += 1
+                        metrics["floodWaitRequestedSeconds"] += seconds
                     print(
                         json.dumps(
                             {
                                 "event": "telegramFloodWait",
+                                "errorType": type(error).__name__,
                                 "waitSeconds": seconds,
                                 "requestType": type(error.request).__name__,
+                                "dc": getattr(args[0], "dc_id", self.session.dc_id)
+                                if args
+                                else self.session.dc_id,
                             }
                         ),
                         flush=True,
                     )
+                    if media:
+                        raise MediaRateLimited(seconds) from None
 
     return PacedClient(
         str(Path(root) / "telegram"),
@@ -186,6 +305,24 @@ class Cache:
                 db.execute(
                     "ALTER TABLE sessions ADD COLUMN history_since INTEGER NOT NULL DEFAULT 0"
                 )
+            if "last_scanned_id" not in {
+                row[1] for row in db.execute("PRAGMA table_info(sessions)")
+            }:
+                db.execute(
+                    "ALTER TABLE sessions ADD COLUMN last_scanned_id INTEGER NOT NULL DEFAULT 0"
+                )
+            media_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(image_metadata)")
+            }
+            for column, declaration in (
+                ("original_done", "INTEGER NOT NULL DEFAULT 0"),
+                ("original_next_retry", "REAL NOT NULL DEFAULT 0"),
+                ("original_error", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if column not in media_columns:
+                    db.execute(
+                        f"ALTER TABLE image_metadata ADD COLUMN {column} {declaration}"
+                    )
         self.path.chmod(0o600)
 
     @contextlib.contextmanager
@@ -234,6 +371,33 @@ class Cache:
                 raise KeyError(sid)
             return row[0]
 
+    def is_current(self, sid, latest_id):
+        """Only skip known heads after the initial history scan has finished."""
+        if not isinstance(latest_id, int) or latest_id < 0:
+            return False
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT last_id,last_scanned_id,history_complete FROM sessions WHERE id=?",
+                (sid,),
+            ).fetchone()
+            return bool(
+                row
+                and row["history_complete"]
+                and max(row["last_id"], row["last_scanned_id"]) >= latest_id
+            )
+
+    def scan_cursor(self, sid):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT last_id,last_scanned_id,history_complete FROM sessions WHERE id=?",
+                (sid,),
+            ).fetchone()
+            return (
+                max(row["last_id"], row["last_scanned_id"])
+                if row["history_complete"]
+                else row["last_id"]
+            )
+
     def ingest(self, sid, payloads, *, now=None, images=()):
         """Commit rows and the Telegram ID checkpoint in the same transaction."""
         with self.connect() as db:
@@ -277,9 +441,13 @@ class Cache:
                 )
         return changed
 
-    def finish_session(self, sid):
+    def finish_session(self, sid, latest_id=0):
         with self.connect() as db:
-            db.execute("UPDATE sessions SET history_complete=1 WHERE id=?", (sid,))
+            db.execute(
+                """UPDATE sessions SET history_complete=1,
+                last_scanned_id=MAX(last_scanned_id,?) WHERE id=?""",
+                (latest_id or 0, sid),
+            )
 
     def finish(self):
         with self.connect() as db:
@@ -288,7 +456,10 @@ class Cache:
                 (str(int(time.time())),),
             )
             db.execute("INSERT OR REPLACE INTO state VALUES('lastError','')")
-            db.execute("INSERT OR REPLACE INTO state VALUES('retryAfter', '0')")
+            db.execute(
+                "UPDATE state SET value='0' WHERE key='retryAfter' AND CAST(value AS REAL)<=?",
+                (time.time(),),
+            )
 
     def record_attempt(self):
         with self.connect() as db:
@@ -303,7 +474,7 @@ class Cache:
                 """INSERT INTO state VALUES('retryAfter',?)
                 ON CONFLICT(key) DO UPDATE SET value=MAX(
                     CAST(state.value AS INTEGER), CAST(excluded.value AS INTEGER))""",
-                (str(int(time.time()) + seconds),),
+                (str(math.ceil(time.time() + seconds)),),
             )
 
     def fail(self, error):
@@ -319,8 +490,10 @@ class Cache:
             seconds = int(getattr(error, "seconds", 0))
             if seconds > 0:
                 db.execute(
-                    "INSERT OR REPLACE INTO state VALUES('retryAfter',?)",
-                    (str(int(time.time()) + seconds),),
+                    """INSERT INTO state VALUES('retryAfter',?)
+                    ON CONFLICT(key) DO UPDATE SET value=MAX(
+                    CAST(state.value AS INTEGER), CAST(excluded.value AS INTEGER))""",
+                    (str(math.ceil(time.time() + seconds)),),
                 )
 
     def status(self):
@@ -468,83 +641,136 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
         raise RuntimeError("NoConversationsSelected")
     if cache.status()["retryAfter"] > time.time():
         return {"deferred": True, **cache.status()}
-    cache.record_attempt()
-    client = shared_client or make_client(root, config)
-    changed = 0
-    history_since = config.get("historySince", int(time.time()) - 7 * 86400)
-    try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            raise RuntimeError("LoginRequired")
-        account = await client.get_me()
-        cache.bind_account(account.id)
-        # Refresh entities once, so IDs and names are resolved without per-message RPCs.
-        dialogs = {str(d.id): d async for d in client.iter_dialogs()}
-        if config.get("allDialogs"):
-            selected = list(dialogs)
-            history_since = int(time.time()) - 7 * 86400
-        for peer in selected:
-            dialog = dialogs.get(str(peer))
-            if dialog is None:
-                raise RuntimeError("SelectedConversationUnavailable")
-            sid = cache.session(
-                account.id,
-                peer,
-                dialog.name or str(peer),
-                "private" if dialog.is_user else "group",
-                history_since,
-            )
-            session_since = cache.history_since(sid)
-            cursor = cache.cursor(sid)
-            batch = []
-            media_batch = []
-            async for message in client.iter_messages(
-                dialog.entity,
-                min_id=cursor,
-                reverse=True,
-                limit=None,
-                wait_time=config.get("requestWaitSeconds", 3),
-                offset_date=datetime.fromtimestamp(session_since - 1, UTC)
-                if cursor == 0
-                else None,
-            ):
-                # MessageEmpty does not have a date or content to archive.
-                if not getattr(message, "date", None):
-                    continue
-                if message.date.timestamp() < session_since:
-                    continue
-                sender = getattr(message, "sender", None)
-                batch.append(
-                    convert_message(
-                        message, utils.get_display_name(sender) if sender else None
-                    )
+    with (
+        measure_collection() as metrics,
+        image_service.pause_prefetch() if image_service else contextlib.nullcontext(),
+    ):
+        cache.record_attempt()
+        client = shared_client or make_client(root, config)
+        changed = 0
+        history_since = config.get("historySince", int(time.time()) - 7 * 86400)
+        try:
+            started = time.monotonic()
+            await client.connect()
+            account = await client.get_me()
+            if account is None:
+                raise RuntimeError("LoginRequired")
+            cache.bind_account(account.id)
+            metrics["connectionSeconds"] = time.monotonic() - started
+            # Refresh entities once, so IDs and names are resolved without per-message RPCs.
+            started = time.monotonic()
+            dialogs = {str(d.id): d async for d in client.iter_dialogs()}
+            metrics["dialogsSeconds"] = time.monotonic() - started
+            metrics["discoveredDialogs"] = len(dialogs)
+            if config.get("allDialogs"):
+                selected = list(dialogs)
+                history_since = int(time.time()) - 7 * 86400
+            started = time.monotonic()
+            metrics["cacheWriteSeconds"] = 0.0
+            for peer in selected:
+                dialog = dialogs.get(str(peer))
+                if dialog is None:
+                    raise RuntimeError("SelectedConversationUnavailable")
+                sid = cache.session(
+                    account.id,
+                    peer,
+                    dialog.name or str(peer),
+                    "private" if dialog.is_user else "group",
+                    history_since,
                 )
-                if metadata := image_metadata(message):
-                    media_batch.append((str(message.id), *metadata))
-                if len(batch) >= BATCH_SIZE:
+                latest_id = getattr(getattr(dialog, "message", None), "id", None)
+                if not isinstance(latest_id, int) or latest_id < 0:
+                    latest_id = getattr(
+                        getattr(dialog, "dialog", None), "top_message", None
+                    )
+                if not isinstance(latest_id, int) or latest_id < 0:
+                    latest_id = None
+                if cache.is_current(sid, latest_id):
+                    metrics["skippedDialogs"] += 1
+                    continue
+                metrics["scannedDialogs"] += 1
+                session_since = cache.history_since(sid)
+                cursor = cache.scan_cursor(sid)
+                batch = []
+                media_batch = []
+                async for message in client.iter_messages(
+                    dialog.entity,
+                    min_id=cursor,
+                    reverse=True,
+                    limit=None,
+                    wait_time=config.get("requestWaitSeconds", 3),
+                    offset_date=datetime.fromtimestamp(session_since - 1, UTC)
+                    if cursor == 0
+                    else None,
+                ):
+                    if latest_id and message.id > latest_id:
+                        break
+                    # MessageEmpty does not have a date or content to archive.
+                    if not getattr(message, "date", None):
+                        if latest_id and message.id == latest_id:
+                            break
+                        continue
+                    if message.date.timestamp() < session_since:
+                        if latest_id and message.id == latest_id:
+                            break
+                        continue
+                    sender = getattr(message, "sender", None)
+                    batch.append(
+                        convert_message(
+                            message, utils.get_display_name(sender) if sender else None
+                        )
+                    )
+                    if metadata := image_metadata(message):
+                        media_batch.append((str(message.id), *metadata))
+                    if len(batch) >= BATCH_SIZE:
+                        write_started = time.monotonic()
+                        changed += cache.ingest(sid, batch, images=media_batch)
+                        metrics["cacheWriteSeconds"] += time.monotonic() - write_started
+                        batch.clear()
+                        media_batch.clear()
+                        if image_service:
+                            image_service.wake_prefetch()
+                        if changed % 10000 == 0:
+                            print(
+                                json.dumps({"collectedMessages": changed}), flush=True
+                            )
+                    if latest_id and message.id == latest_id:
+                        break
+                if batch:
+                    write_started = time.monotonic()
                     changed += cache.ingest(sid, batch, images=media_batch)
-                    batch.clear()
-                    media_batch.clear()
+                    metrics["cacheWriteSeconds"] += time.monotonic() - write_started
                     if image_service:
                         image_service.wake_prefetch()
-                    if changed % 10000 == 0:
-                        print(json.dumps({"collectedMessages": changed}), flush=True)
-            if batch:
-                changed += cache.ingest(sid, batch, images=media_batch)
-                if image_service:
-                    image_service.wake_prefetch()
-            cache.finish_session(sid)
-        cache.finish()
-        return {"changedMessages": changed, **cache.status()}
-    finally:
-        if shared_client is None:
-            await client.disconnect()
+                cache.finish_session(sid, latest_id)
+            cache.finish()
+            metrics["historySeconds"] = time.monotonic() - started
+            return {"changedMessages": changed, **cache.status()}
+        finally:
+            if shared_client is None:
+                await client.disconnect()
 
 
 def make_server(cache, config, images=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
+
+        def do_DELETE(self):
+            from urllib.parse import unquote
+
+            if not hmac.compare_digest(
+                self.headers.get("Authorization", ""), "Bearer " + config["token"]
+            ):
+                return self.reply(401, {"error": "Unauthorized"})
+            prefix = "/api/v1/image-requests/"
+            path = urlsplit(self.path).path
+            if images is None or not path.startswith(prefix):
+                return self.reply(404, {"error": "Not found"})
+            request_id = unquote(path[len(prefix) :])
+            if not request_id or len(request_id) > 128:
+                return self.reply(400, {"error": "Invalid request ID"})
+            return self.reply(200, images.cancel_request(request_id))
 
         def do_GET(self):
             path = urlsplit(self.path)
@@ -561,6 +787,8 @@ def make_server(cache, config, images=None):
             try:
                 query = parse_qs(path.query)
                 limit = max(1, min(5000, int(query.get("limit", ["1000"])[0])))
+                if path.path == "/api/v1/image-capabilities":
+                    return self.reply(200, {"cancellation": 1})
                 if path.path == "/api/v1/sessions":
                     sessions = cache.sessions()
                     keyword = query.get("keyword", [""])[0].casefold()
@@ -598,6 +826,7 @@ def make_server(cache, config, images=None):
                             unquote(parts[3]),
                             unquote(parts[5]),
                             size if len(parts) == 8 else None,
+                            request_id=self.headers.get("X-Image-Request-Id"),
                         ),
                     )
                 if (
@@ -619,12 +848,41 @@ def make_server(cache, config, images=None):
                 return self.reply(404, {"error": "Unknown conversation"})
             except ValueError:
                 return self.reply(400, {"error": "Invalid request"})
-            except Exception as error:  # noqa: BLE001 -- Never expose upstream exception details.
-                from telethon.errors import FloodWaitError
+            except Exception as error:  # noqa: BLE001 -- Keep upstream details private.
+                from concurrent.futures import CancelledError
 
-                if isinstance(error, FloodWaitError):
-                    cache.fail(error)
-                return self.reply(503, {"error": "Image source unavailable"})
+                from media_scheduler import MediaRateLimited, MediaTimeout
+
+                if isinstance(error, MediaRateLimited):
+                    return self.reply(
+                        429,
+                        {
+                            "error": "Telegram media cooling down",
+                            "code": "IMAGE_RATE_LIMITED",
+                            "retryable": True,
+                            "retryAfterSeconds": error.retry_after,
+                        },
+                    )
+                if isinstance(error, (MediaTimeout, TimeoutError)):
+                    return self.reply(
+                        504,
+                        {
+                            "error": "Image request timed out",
+                            "code": "IMAGE_TIMEOUT",
+                            "retryable": True,
+                            "phase": getattr(error, "phase", "processing"),
+                        },
+                    )
+                if isinstance(error, CancelledError):
+                    return self.reply(499, {"error": "Image request cancelled"})
+                return self.reply(
+                    503,
+                    {
+                        "error": "Image source unavailable",
+                        "code": "IMAGE_SOURCE_UNAVAILABLE",
+                        "retryable": True,
+                    },
+                )
 
         def reply(self, status, value):
             body = (
@@ -640,6 +898,14 @@ def make_server(cache, config, images=None):
                 else "application/json; charset=utf-8",
             )
             self.send_header("Cache-Control", "no-store")
+            if images is not None:
+                self.send_header("X-Image-Cancel-Protocol", "1")
+            if (
+                status == 429
+                and isinstance(value, dict)
+                and value.get("retryAfterSeconds")
+            ):
+                self.send_header("Retry-After", str(value["retryAfterSeconds"]))
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             try:

@@ -3,9 +3,11 @@ import {
   assertValidTopicDayKey,
   createChatTopicModelClient,
   createChatTopicService,
+  appLogger,
   type ChatTopicService,
 } from '@openchatlab/node-runtime'
-import type { CreateChatTopicsRequest } from '@openchatlab/shared-types'
+import type { ChatTopicAutomationSettings, CreateChatTopicsRequest } from '@openchatlab/shared-types'
+import type { AutomationRouteHostContext } from '../../context/automation'
 import type { AiRouteContext } from '../../context/ai'
 import type { RuntimeRouteContext } from '../../context/runtime'
 
@@ -13,7 +15,8 @@ type ChatTopicRouteContext = Pick<
   RuntimeRouteContext,
   'sessionAdapter' | 'pathProvider' | 'runtimeIdentity' | 'nativeBinding'
 > &
-  Pick<AiRouteContext, 'llmConfigStore'>
+  Pick<AiRouteContext, 'llmConfigStore'> &
+  AutomationRouteHostContext
 
 export function registerAiChatTopicRoutes(server: FastifyInstance, ctx: ChatTopicRouteContext): void {
   let service: ChatTopicService | null = null
@@ -32,9 +35,62 @@ export function registerAiChatTopicRoutes(server: FastifyInstance, ctx: ChatTopi
     return service
   }
 
+  let timer: ReturnType<typeof setInterval> | null = null
+  let unsubscribe: (() => void) | undefined
+  const tick = () => {
+    try {
+      getService().tickAutomation()
+    } catch (error) {
+      appLogger.error('chat-topics', 'automatic topic scheduling failed', error)
+    }
+  }
+  server.addHook('onReady', async () => {
+    if (!ctx.automation || !ctx.runtimeIdentity) return
+    for (const source of ctx.automation.dsManager.loadAll() as Array<{
+      sessions?: Array<{ targetSessionId?: string }>
+    }>) {
+      for (const session of source.sessions ?? [])
+        if (session.targetSessionId) getService().trackSession(session.targetSessionId)
+    }
+    unsubscribe = ctx.automation.pullEngine.subscribeSessionImported?.((sessionId) => getService().noteSync(sessionId))
+    tick()
+    timer = setInterval(tick, 60_000)
+    timer.unref?.()
+  })
+
   server.addHook('onClose', async () => {
+    if (timer) clearInterval(timer)
+    unsubscribe?.()
     service?.close()
   })
+
+  server.get<{ Params: { id: string } }>('/_web/sessions/:id/topics/feed', async (request) =>
+    getService().getFeed(request.params.id)
+  )
+  server.put<{ Params: { id: string }; Body: ChatTopicAutomationSettings }>(
+    '/_web/sessions/:id/topics/automation',
+    async (request) => getService().setAutomation(request.params.id, request.body)
+  )
+  server.post<{ Params: { id: string } }>('/_web/sessions/:id/topics/feed/update', async (request, reply) => {
+    const run = getService().updateFeed(request.params.id)
+    return reply.code(run ? 202 : 200).send(run)
+  })
+  server.post<{ Params: { id: string }; Body: { topics: Array<{ id: string; version: number }> } }>(
+    '/_web/sessions/:id/topics/feed/read',
+    async (request) => {
+      const topics = request.body?.topics
+      if (
+        !Array.isArray(topics) ||
+        topics.some(
+          (topic) => !topic || typeof topic.id !== 'string' || !Number.isSafeInteger(topic.version) || topic.version < 0
+        )
+      ) {
+        throw Object.assign(new Error('Invalid topic read versions'), { statusCode: 400 })
+      }
+      getService().markRead(request.params.id, topics)
+      return { success: true }
+    }
+  )
 
   server.post<{ Params: { id: string }; Body: CreateChatTopicsRequest }>(
     '/_web/sessions/:id/topics/preflight',

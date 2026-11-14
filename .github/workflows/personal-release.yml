@@ -1,0 +1,164 @@
+name: Release ChatLab Personal
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag matching package.json
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: personal-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  identity:
+    if: github.repository == 'bufferducky/ChatLab'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Check version, source tag and release notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const version = JSON.parse(fs.readFileSync('package.json')).version;
+          if (process.env.RELEASE_TAG !== `v${version}`) throw Error('Tag and package version must match');
+          const git = args => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          if (git(['rev-parse', 'HEAD']) !== git(['rev-list', '-n', '1', process.env.RELEASE_TAG])) throw Error('Source tag mismatch');
+          JS
+          node scripts/personal-release.mjs notes release-notes.md
+  build:
+    needs: identity
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: mac
+            architecture: arm64
+          - os: windows-latest
+            platform: win
+            architecture: x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+          run_install: false
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/parser-native
+      - name: Check native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+        run: node -e "if(process.arch!==process.env.EXPECTED_ARCH)throw Error('Runner architecture mismatch')"
+      - name: Build native parser
+        run: pnpm --filter @openchatlab/parser-native build
+      - name: Prepare Electron SQLite and build desktop
+        run: |
+          pnpm --filter @openchatlab/desktop run ensure-native
+          pnpm run build:desktop
+      - name: Package unsigned personal installers and verify native runtime
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          BUILD_ARCH: ${{ matrix.architecture }}
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          node apps/desktop/scripts/build-app.mjs "--$BUILD_PLATFORM" "--$BUILD_ARCH" "--config.extraMetadata.version=$VERSION"
+          if [ "$BUILD_PLATFORM" = mac ]; then
+            node scripts/check-desktop-native.mjs darwin-arm64
+          else
+            node scripts/check-desktop-native.mjs win32-x64-msvc
+            node scripts/check-packaged-sqlite.mjs
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: personal-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest*.yml
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [identity, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: personal-*
+          merge-multiple: true
+          path: release-dist
+      - name: Assemble notes, source identity and checksums
+        run: |
+          node scripts/personal-release.mjs notes release-notes.md
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          fs.writeFileSync('release-dist/BUILD_INFO.json', JSON.stringify({
+            version: JSON.parse(fs.readFileSync('package.json')).version,
+            commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+            repository: process.env.GITHUB_REPOSITORY,
+            workflowRun: process.env.GITHUB_RUN_ID,
+            platforms: ['macOS arm64', 'Windows x64'],
+            signed: false,
+          }, null, 2) + '\n');
+          JS
+          node scripts/personal-release.mjs verify release-dist --write-checksums
+      - name: Create complete draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-dist/* --verify-tag --draft --title "ChatLab Personal $RELEASE_TAG" --notes-file release-notes.md
+      - name: Redownload and verify the uploaded draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release download "$RELEASE_TAG" --dir verified-release
+          node scripts/personal-release.mjs verify verified-release
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          fi

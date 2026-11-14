@@ -30,6 +30,7 @@ export interface AutomationRouteContext {
     removeSession: (sourceId: string, sessionId: string) => { targetSessionId?: string | null } | null | undefined
   }
   pullEngine: {
+    subscribeSessionImported?: (listener: (sessionId: string) => void) => () => void
     triggerPull: (sourceId: string, sessionId?: string) => Promise<unknown>
     triggerPullAll: (sourceId: string) => Promise<unknown>
     getProgress: () => unknown[]

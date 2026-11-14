@@ -7,9 +7,12 @@ import type {
   ChatTopicDayStatus,
   ChatTopicRun,
   ChatTopicRunStatus,
+  ChatTopicAutomationSettings,
+  ChatTopicFeedItem,
 } from '@openchatlab/shared-types'
 import { openBetterSqliteDatabase } from '../../better-sqlite3-adapter'
 import { getChatTopicsDbPath } from './paths'
+import { DEFAULT_TOPIC_AUTOMATION, type LiveTopicSession } from './live'
 
 const CHAT_TOPICS_SCHEMA_VERSION = 3
 
@@ -138,6 +141,130 @@ export class ChatTopicStore {
 
   close(): void {
     this.db.close()
+  }
+
+  ensureLiveSession(sessionId: string, now: number): LiveTopicSession {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO topic_live_session (session_id, settings_json, baseline_ts)
+      VALUES (?, ?, ?)`
+      )
+      .run(sessionId, JSON.stringify(DEFAULT_TOPIC_AUTOMATION), Math.floor(now / 1000) - 7 * 86400)
+    return this.getLiveSession(sessionId)!
+  }
+
+  getLiveSession(sessionId: string): LiveTopicSession | null {
+    const row = this.db
+      .prepare(
+        `SELECT settings_json AS settingsJson, cursor, baseline_ts AS baselineTs,
+      synced_at AS syncedAt, processed_at AS processedAt FROM topic_live_session WHERE session_id = ?`
+      )
+      .get(sessionId) as
+      | {
+          settingsJson: string
+          cursor: number | null
+          baselineTs: number
+          syncedAt: number | null
+          processedAt: number | null
+        }
+      | undefined
+    return row
+      ? {
+          settings: JSON.parse(row.settingsJson),
+          cursor: row.cursor,
+          baselineTs: row.baselineTs,
+          syncedAt: row.syncedAt,
+          processedAt: row.processedAt,
+        }
+      : null
+  }
+
+  listLiveSessions(): string[] {
+    return this.db
+      .prepare('SELECT session_id AS id FROM topic_live_session ORDER BY COALESCE(processed_at, 0)')
+      .all()
+      .map((row) => String(row.id))
+  }
+
+  updateLiveSettings(sessionId: string, settings: ChatTopicAutomationSettings, now: number): void {
+    this.ensureLiveSession(sessionId, now)
+    this.db
+      .prepare('UPDATE topic_live_session SET settings_json = ? WHERE session_id = ?')
+      .run(JSON.stringify(settings), sessionId)
+  }
+
+  noteLiveSync(sessionId: string, now: number): void {
+    this.ensureLiveSession(sessionId, now)
+    this.db.prepare('UPDATE topic_live_session SET synced_at = ? WHERE session_id = ?').run(now, sessionId)
+  }
+
+  getLiveTopics(sessionId: string): ChatTopicFeedItem[] {
+    return this.db
+      .prepare(
+        `SELECT topic_json AS topicJson, read_version AS readVersion FROM topic_live_topic
+      WHERE session_id = ? ORDER BY updated_at DESC, id`
+      )
+      .all(sessionId)
+      .map((row) => ({
+        ...JSON.parse(String(row.topicJson)),
+        readVersion: Number(row.readVersion),
+      }))
+  }
+
+  markLiveTopicsRead(sessionId: string, topics: Array<{ id: string; version: number }>): void {
+    this.db.transaction(() => {
+      for (const topic of topics) {
+        this.db
+          .prepare(
+            `UPDATE topic_live_topic SET read_version = MAX(read_version, MIN(version, ?))
+          WHERE session_id = ? AND id = ?`
+          )
+          .run(topic.version, sessionId, topic.id)
+      }
+    })
+  }
+
+  saveLiveBatch(
+    input: {
+      sessionId: string
+      runId: string
+      cursor: number
+      topics: ChatTopicFeedItem[]
+      removedIds: string[]
+      now: number
+    },
+    guard: TopicExecutionLeaseGuard
+  ): void {
+    this.db.transaction(() => {
+      this.assertExecutionLease(input.runId, guard)
+      for (const id of input.removedIds)
+        this.db.prepare('DELETE FROM topic_live_topic WHERE session_id = ? AND id = ?').run(input.sessionId, id)
+      for (const topic of input.topics) {
+        this.db
+          .prepare(
+            `INSERT INTO topic_live_topic (session_id, id, topic_json, version, updated_at)
+          VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id, id) DO UPDATE SET
+          topic_json = excluded.topic_json, version = excluded.version, updated_at = excluded.updated_at`
+          )
+          .run(input.sessionId, topic.id, JSON.stringify(topic), topic.version, topic.updatedAt)
+      }
+      this.db
+        .prepare('UPDATE topic_live_session SET cursor = ?, processed_at = ? WHERE session_id = ?')
+        .run(input.cursor, input.now, input.sessionId)
+    })
+  }
+
+  setLiveRunAutomatic(runId: string, automatic: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO topic_live_run (run_id, automatic) VALUES (?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET automatic = excluded.automatic`
+      )
+      .run(runId, Number(automatic))
+  }
+
+  isLiveRunAutomatic(runId: string): boolean {
+    return this.db.prepare('SELECT automatic FROM topic_live_run WHERE run_id = ?').get(runId)?.automatic === 1
   }
 
   createRun(run: ChatTopicRun): void {
@@ -331,7 +458,7 @@ export class ChatTopicStore {
           model_id as modelId, prompt_version as promptVersion, algorithm_version as algorithmVersion,
           input_tokens as inputTokens, output_tokens as outputTokens, model_calls as modelCalls,
           last_error as lastError, created_at as createdAt, updated_at as updatedAt
-        FROM topic_run WHERE session_id = ? ORDER BY created_at DESC LIMIT 1`
+        FROM topic_run WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
       )
       .get(sessionId) as TopicRunRow | undefined
     return row ?? null
@@ -654,11 +781,12 @@ export class ChatTopicStore {
 
   deleteSession(sessionId: string): boolean {
     return this.db.transaction(() => {
+      const live = this.db.prepare('DELETE FROM topic_live_session WHERE session_id = ?').run(sessionId).changes
       this.db.prepare('DELETE FROM topic WHERE session_id = ?').run(sessionId)
       const days = this.db.prepare('DELETE FROM topic_day WHERE session_id = ?').run(sessionId).changes
       const work = this.db.prepare('DELETE FROM topic_day_work WHERE session_id = ?').run(sessionId).changes
       const runs = this.db.prepare('DELETE FROM topic_run WHERE session_id = ?').run(sessionId).changes
-      return days + work + runs > 0
+      return days + work + runs + live > 0
     })
   }
 
@@ -794,6 +922,31 @@ export class ChatTopicStore {
       CREATE INDEX IF NOT EXISTS idx_topic_day_work_run ON topic_day_work(run_id, day_key);
       CREATE INDEX IF NOT EXISTS idx_topic_day_order ON topic(session_id, day_key, ordinal);
       CREATE INDEX IF NOT EXISTS idx_topic_evidence_message ON topic_evidence(message_id);
+
+      -- Additive tables are ignored by older runtimes; the existing day schema remains unchanged.
+      CREATE TABLE IF NOT EXISTS topic_live_session (
+        session_id TEXT PRIMARY KEY,
+        settings_json TEXT NOT NULL,
+        baseline_ts INTEGER NOT NULL,
+        cursor INTEGER,
+        synced_at INTEGER,
+        processed_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS topic_live_topic (
+        session_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        topic_json TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        read_version INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, id),
+        FOREIGN KEY (session_id) REFERENCES topic_live_session(session_id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS topic_live_run (
+        run_id TEXT PRIMARY KEY,
+        automatic INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES topic_run(id) ON DELETE CASCADE
+      );
     `)
 
     if (version === 1) {

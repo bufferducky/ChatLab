@@ -8,18 +8,27 @@ import {
   type ImageManifest,
 } from '../../packages/node-runtime/src/services/message-images'
 
-export async function cacheTelegramPreview(
+export async function cacheTelegramImage(
   cache: MessageImageCache,
   manifestUrl: string,
   caption: string,
-  data: Buffer
+  data: Buffer,
+  size: 'preview' | 'original'
 ) {
-  const image = await prepareMessageImage(data, 'preview')
+  const started = performance.now()
+  const image = await prepareMessageImage(data, size)
+  const preview = size === 'original' ? await prepareMessageImage(data, 'preview') : undefined
+  const prepared = performance.now()
   const key = (url: string) => createHash('sha256').update(url).digest('hex')
   const manifest: ImageManifest = { images: [{ index: 0 }], caption }
   await cache.put(key(manifestUrl), { data: Buffer.from(JSON.stringify(manifest)), mime: 'application/json' })
-  await cache.put(key(`${manifestUrl}/0?size=preview`), image)
-  return { bytes: image.data.length }
+  await cache.put(key(`${manifestUrl}/0?size=${size}`), image)
+  if (preview) await cache.put(key(`${manifestUrl}/0?size=preview`), preview)
+  return {
+    bytes: image.data.length,
+    conversionSeconds: (prepared - started) / 1000,
+    cacheSeconds: (performance.now() - prepared) / 1000,
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -37,12 +46,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       manifestUrl: string
       caption: string
       data: string
+      size?: 'preview' | 'original'
     }
-    const result = await cacheTelegramPreview(
+    // An already-running collector may still send the previous preview-only payload.
+    const size = input.size ?? 'preview'
+    if (!['preview', 'original'].includes(size)) throw new Error('Invalid image size')
+    const result = await cacheTelegramImage(
       new MessageImageCache(directory),
       input.manifestUrl,
       input.caption,
-      Buffer.from(input.data, 'base64')
+      Buffer.from(input.data, 'base64'),
+      size
     )
     process.stdout.write(JSON.stringify(result))
   } catch {

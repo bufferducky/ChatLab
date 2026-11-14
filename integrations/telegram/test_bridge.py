@@ -93,6 +93,30 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(restarted.status()["messages"], 1)
         self.assertEqual(restarted.history_since(self.sid), 100)
 
+    def test_scan_and_original_queue_upgrade_preserves_saved_messages_and_previews(
+        self,
+    ):
+        self.cache.ingest(self.sid, [payload(5)], images=[("5", b"media", "caption")])
+        self.cache.finish_session(self.sid)
+        with self.cache.connect() as db:
+            db.execute("UPDATE image_metadata SET preview_done=1")
+            db.execute("ALTER TABLE sessions DROP COLUMN last_scanned_id")
+            for column in ("original_done", "original_next_retry", "original_error"):
+                db.execute(f"ALTER TABLE image_metadata DROP COLUMN {column}")
+        upgraded = Cache(self.cache.root)
+        self.assertEqual(upgraded.messages(self.sid)["messages"], [payload(5)])
+        self.assertTrue(upgraded.is_current(self.sid, 5))
+        with upgraded.connect() as db:
+            row = db.execute("SELECT * FROM image_metadata").fetchone()
+        self.assertEqual(
+            (row["preview_done"], row["media"], row["caption"]),
+            (1, b"media", "caption"),
+        )
+        self.assertEqual(
+            (row["original_done"], row["original_next_retry"], row["original_error"]),
+            (0, 0, ""),
+        )
+
     def test_keyset_paging_and_late_history_use_committed_observations(self):
         self.cache.ingest(self.sid, [payload(5), payload(6), payload(7)], now=1000)
         first = self.cache.messages(self.sid, limit=1)
@@ -243,7 +267,12 @@ class RequestControlTests(unittest.IsolatedAsyncioTestCase):
                 return "ok"
 
             with (
-                patch("bridge.time", SimpleNamespace(monotonic=lambda: clock.now)),
+                patch(
+                    "bridge.time",
+                    SimpleNamespace(
+                        monotonic=lambda: clock.now, time=lambda: clock.now
+                    ),
+                ),
                 patch("bridge.asyncio.sleep", side_effect=sleep),
                 patch.object(TelegramClient, "_call", side_effect=call),
             ):
@@ -336,7 +365,12 @@ class RequestControlTests(unittest.IsolatedAsyncioTestCase):
                 return request
 
             with (
-                patch("bridge.time", SimpleNamespace(monotonic=lambda: clock.now)),
+                patch(
+                    "bridge.time",
+                    SimpleNamespace(
+                        monotonic=lambda: clock.now, time=lambda: clock.now
+                    ),
+                ),
                 patch("bridge.asyncio.sleep", side_effect=sleep),
                 patch.object(TelegramClient, "_call", side_effect=call),
             ):
@@ -388,6 +422,212 @@ class RequestControlTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_empty_chat_scan_watermark_survives_restart_and_new_messages_still_arrive(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            heads = {1: 5}
+            queried = []
+
+            class Client:
+                connect = AsyncMock()
+                get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+                async def iter_dialogs(self):
+                    yield SimpleNamespace(
+                        id=1,
+                        name="Empty",
+                        is_user=True,
+                        entity=1,
+                        message=SimpleNamespace(id=heads[1]),
+                    )
+
+                async def iter_messages(self, peer, **kwargs):
+                    queried.append(kwargs["min_id"])
+                    if heads[1] > 5:
+                        yield types.Message(
+                            id=6,
+                            peer_id=types.PeerUser(1),
+                            date=datetime.fromtimestamp(200, UTC),
+                            message="new",
+                        )
+
+            client = Client()
+            config = {"selectedPeers": [1], "historySince": 100}
+            asyncio.run(refresh(directory, config, cache, client))
+            self.assertEqual(cache.cursor("telegram:42:1"), 0)
+            restarted = Cache(directory)
+            asyncio.run(refresh(directory, config, restarted, client))
+            self.assertEqual(queried, [0])
+            heads[1] = 6
+            result = asyncio.run(refresh(directory, config, restarted, client))
+            self.assertEqual(queried, [0, 5])
+            self.assertEqual(result["changedMessages"], 1)
+            self.assertEqual(restarted.cursor("telegram:42:1"), 6)
+
+    def test_snapshot_head_stops_before_an_extra_page_and_defers_later_arrivals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            head = 2
+            visited = []
+
+            class Client:
+                connect = AsyncMock()
+                get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+                async def iter_dialogs(self):
+                    yield SimpleNamespace(
+                        id=1,
+                        name="Active",
+                        is_user=True,
+                        entity=1,
+                        message=SimpleNamespace(id=head),
+                    )
+
+                async def iter_messages(self, peer, **kwargs):
+                    for mid in range(kwargs["min_id"] + 1, 4):
+                        visited.append(mid)
+                        yield types.Message(
+                            id=mid,
+                            peer_id=types.PeerUser(1),
+                            date=datetime.fromtimestamp(200, UTC),
+                            message="new",
+                        )
+                    raise AssertionError("An unnecessary end-of-history request")
+
+            client = Client()
+            config = {"selectedPeers": [1], "historySince": 100}
+            first = asyncio.run(refresh(directory, config, cache, client))
+            self.assertEqual((visited, first["changedMessages"]), ([1, 2], 2))
+            head = 3
+            second = asyncio.run(refresh(directory, config, cache, client))
+            self.assertEqual(second["changedMessages"], 1)
+            self.assertEqual(cache.cursor("telegram:42:1"), 3)
+
+    def test_confirmed_empty_remote_dialog_skips_queries_but_unknown_head_does_not(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            for peer in (1, 2):
+                sid = cache.session(42, peer, "Empty", "private", 100)
+                cache.finish_session(sid)
+            queried = []
+
+            class Client:
+                connect = AsyncMock()
+                get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+                async def iter_dialogs(self):
+                    for peer in (1, 2):
+                        yield SimpleNamespace(
+                            id=peer,
+                            name="Empty",
+                            is_user=True,
+                            entity=peer,
+                            message=None,
+                            dialog=SimpleNamespace(top_message=0)
+                            if peer == 1
+                            else None,
+                        )
+
+                async def iter_messages(self, peer, **kwargs):
+                    queried.append(peer)
+                    return
+                    yield
+
+            asyncio.run(refresh(directory, {"selectedPeers": [1, 2]}, cache, Client()))
+            self.assertEqual(queried, [2])
+
+    def test_missing_current_account_stops_collection_without_changing_saved_messages(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            sid = cache.session(42, 1, "Saved", "private")
+            cache.ingest(sid, [payload(5)])
+            client = SimpleNamespace(
+                connect=AsyncMock(),
+                is_user_authorized=AsyncMock(return_value=True),
+                get_me=AsyncMock(return_value=None),
+            )
+            with self.assertRaisesRegex(RuntimeError, "^LoginRequired$"):
+                asyncio.run(refresh(directory, {"selectedPeers": [1]}, cache, client))
+            self.assertEqual(cache.cursor(sid), 5)
+            self.assertEqual(cache.messages(sid)["messages"], [payload(5)])
+
+    def test_unchanged_dialogs_skip_history_and_later_new_messages_are_collected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            # Include interrupted history, a missing head, a new chat and a deleted head.
+            heads = {1: 5, 2: 6, 3: 5, 4: None, 5: 1, 6: 4}
+            for peer in (1, 2, 3, 4, 6):
+                sid = cache.session(42, peer, str(peer), "private", 100)
+                cache.ingest(sid, [payload(5)])
+                if peer != 3:
+                    cache.finish_session(sid)
+
+            class Client:
+                def __init__(self):
+                    self.queried = []
+
+                async def connect(self):
+                    pass
+
+                async def is_user_authorized(self):
+                    return True
+
+                async def get_me(self):
+                    return SimpleNamespace(id=42)
+
+                async def iter_dialogs(self):
+                    for peer, head in heads.items():
+                        yield SimpleNamespace(
+                            id=peer,
+                            name=f"renamed-{peer}",
+                            is_user=True,
+                            entity=peer,
+                            message=SimpleNamespace(id=head) if head else None,
+                        )
+
+                async def iter_messages(self, peer, **kwargs):
+                    self.queried.append(peer)
+                    for mid in range(kwargs["min_id"] + 1, (heads[peer] or 5) + 1):
+                        yield types.Message(
+                            id=mid,
+                            peer_id=types.PeerUser(peer),
+                            from_id=types.PeerUser(peer),
+                            date=datetime.fromtimestamp(100, UTC),
+                            message="synthetic",
+                        )
+
+            client = Client()
+            config = {"selectedPeers": list(heads), "historySince": 100}
+            result = asyncio.run(refresh(directory, config, cache, client))
+            self.assertEqual(client.queried, [2, 3, 4, 5])
+            self.assertEqual(result["changedMessages"], 2)
+            self.assertEqual(result["historyComplete"], 6)
+            self.assertEqual(cache.cursor("telegram:42:2"), 6)
+            self.assertEqual(cache.cursor("telegram:42:5"), 1)
+            self.assertEqual(
+                next(s for s in cache.sessions() if s["id"] == "telegram:42:1")["name"],
+                "renamed-1",
+            )
+
+            heads[1] = 6
+            client.queried.clear()
+            result = asyncio.run(refresh(directory, config, cache, client))
+            self.assertEqual(client.queried, [1, 4])
+            self.assertEqual(result["changedMessages"], 1)
+            self.assertEqual(
+                [
+                    m["platformMessageId"]
+                    for m in cache.messages("telegram:42:1")["messages"]
+                ],
+                ["5", "6"],
+            )
+
     def test_all_dialogs_discovers_new_chats_with_a_fixed_week_start(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Cache(directory)
@@ -468,7 +708,11 @@ class CollectionTests(unittest.TestCase):
 
                 async def iter_dialogs(self):
                     yield SimpleNamespace(
-                        id=-2, name="Test", is_user=False, entity="test"
+                        id=-2,
+                        name="Test",
+                        is_user=False,
+                        entity="test",
+                        message=SimpleNamespace(id=5),
                     )
 
                 async def iter_messages(
@@ -507,6 +751,14 @@ class CollectionTests(unittest.TestCase):
                         )
                     )
                 self.assertEqual(cache.cursor(sid), 3)
+                self.assertEqual(cache.scan_cursor(sid), 3)
+                with cache.connect() as db:
+                    self.assertEqual(
+                        db.execute(
+                            "SELECT last_scanned_id FROM sessions WHERE id=?", (sid,)
+                        ).fetchone()[0],
+                        0,
+                    )
                 self.assertEqual(cache.status()["historyComplete"], 0)
                 client.fail = False
                 result = asyncio.run(
@@ -527,3 +779,58 @@ class CollectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageProtocolTests(unittest.TestCase):
+    def test_cancellation_is_authenticated_idempotent_and_rate_limit_seconds_survive_http(
+        self,
+    ):
+        from media_scheduler import MediaRateLimited
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            cache.bind_account(1)
+            sid = cache.session(1, -2, "Synthetic", "group")
+            cache.ingest(sid, [payload(9)])
+            images = SimpleNamespace(
+                request=lambda *args, **kwargs: (_ for _ in ()).throw(
+                    MediaRateLimited(37)
+                ),
+                cancel_request=lambda _request_id: {"cancelled": True},
+            )
+            server = make_server(
+                cache, {"token": "synthetic-secret", "port": 0}, images
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with self.assertRaises(HTTPError) as unauthorized:
+                    urlopen(
+                        Request(base + "/api/v1/image-requests/test", method="DELETE")
+                    )
+                self.assertEqual(unauthorized.exception.code, 401)
+                headers = {"Authorization": "Bearer synthetic-secret"}
+                for _ in range(2):
+                    with urlopen(
+                        Request(
+                            base + "/api/v1/image-requests/test",
+                            method="DELETE",
+                            headers=headers,
+                        )
+                    ) as response:
+                        self.assertEqual(json.load(response), {"cancelled": True})
+                with self.assertRaises(HTTPError) as limited:
+                    urlopen(
+                        Request(
+                            base + f"/api/v1/sessions/{sid}/messages/9/images/0",
+                            headers=headers,
+                        )
+                    )
+                self.assertEqual(limited.exception.code, 429)
+                self.assertEqual(limited.exception.headers["Retry-After"], "37")
+                self.assertEqual(json.load(limited.exception)["retryAfterSeconds"], 37)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(2)

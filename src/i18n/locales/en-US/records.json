@@ -18,7 +18,13 @@
     "tryAdjustFilter": "Try adjusting the filter",
     "loadingMore": "Loading more...",
     "scrollUpForMore": "↑ Scroll up to load more",
-    "scrollDownForMore": "↓ Scroll down to load more"
+    "scrollDownForMore": "↓ Scroll down to load more",
+    "highlightingSender": "Highlighting: {name}",
+    "clearSenderHighlight": "Clear highlight",
+    "senderPosition": "{current} / {total} in this segment",
+    "senderNavigation": "Browse this member’s messages",
+    "previousSenderMessage": "Previous",
+    "nextSenderMessage": "Next"
   },
   "filter": {
     "messageId": "Message ID",
@@ -130,13 +136,57 @@
     "topicState": {
       "active": "Active",
       "closed": "Concluded"
+    },
+    "feed": {
+      "views": "Topic views",
+      "updates": "Recent updates",
+      "all": "All topics",
+      "day": "By day",
+      "settings": "Automatic summary settings",
+      "schedule": "Automatic summaries {start}–{end} · {timezone}",
+      "syncedAt": "Last synced: {time}",
+      "processedAt": "Last processed: {time}",
+      "pending": "{count} messages pending",
+      "enable": "Automatic summaries",
+      "startTime": "Start time",
+      "endTime": "End time",
+      "timezone": "Time zone",
+      "scheduleHint": "Messages keep syncing outside these hours. AI summaries catch up together when the schedule starts. Initially covers the last 7 days; use batch summaries for older history.",
+      "save": "Save settings",
+      "updateNow": "Update now",
+      "markShownRead": "Mark displayed topics read",
+      "retry": "Retry",
+      "search": "Search topics or summaries",
+      "filterDate": "Filter by discussion date",
+      "unreadCount": "{count} topics with unread updates",
+      "noUpdates": "No unread substantive updates",
+      "noTopics": "No matching topics",
+      "emptyHint": "New topics and developments appear here after processing.",
+      "newTopic": "New topic",
+      "newProgress": "New development",
+      "messageCount": "{count} related messages",
+      "sinceRead": "Developments since you last read",
+      "currentSummary": "Current summary",
+      "viewOriginal": "View original messages",
+      "markRead": "Mark as read",
+      "showMore": "Show more",
+      "noModel": "Configure a fast model first",
+      "processing": "Processing latest messages",
+      "disabled": "Automatic summaries are off",
+      "sleeping": "Automatic summaries paused until scheduled hours",
+      "waiting": "Waiting to process new messages",
+      "caughtUp": "All pending messages processed"
     }
   },
   "messageItem": {
     "viewContext": "View Context",
     "replyTo": "Reply to",
     "expandMessyContent": "Show full content",
-    "collapseMessyContent": "Collapse"
+    "collapseMessyContent": "Collapse",
+    "highlightSender": "Highlight messages from {name}",
+    "unhighlightSender": "Stop highlighting messages from {name}",
+    "jumpToOriginal": "Go to original message",
+    "originalNotImported": "Original message has not been imported"
   },
   "images": {
     "image": "Image",
@@ -163,7 +213,10 @@
       "QQ_OFFLINE": "QQ is not logged in or is offline. Log in and retry.",
       "QQ_BRIDGE_INCOMPATIBLE": "This QQ version is not compatible with the image bridge",
       "QQ_DOWNLOAD_TIMEOUT": "Image download timed out. Try again.",
-      "IMAGE_SOURCE_UNAVAILABLE": "Image source is temporarily unavailable"
-    }
+      "IMAGE_SOURCE_UNAVAILABLE": "Image source is temporarily unavailable",
+      "IMAGE_RATE_LIMITED": "Telegram rate limit reached. Try again later.",
+      "IMAGE_TIMEOUT": "Image loading timed out. Try again."
+    },
+    "retryIn": "Rate limited. Retrying in {seconds} seconds."
   }
 }

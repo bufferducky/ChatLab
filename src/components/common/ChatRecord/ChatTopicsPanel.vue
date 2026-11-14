@@ -10,6 +10,7 @@ import {
   type ChatTopicHighlight,
 } from './topic-highlight'
 import { resolveChatTopicProgressDetail } from './topic-progress'
+import ChatTopicFeedPanel from './ChatTopicFeedPanel.vue'
 import { useToast } from '@/composables/useToast'
 import {
   useChatTopicsService,
@@ -34,6 +35,7 @@ const { t, locale } = useI18n()
 const toast = useToast()
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const day = ref<ChatTopicDay | null>(null)
+const viewMode = ref<'updates' | 'all' | 'day'>('updates')
 const run = ref<ChatTopicRun | null>(null)
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -90,7 +92,7 @@ const rangeOptions = computed(() => [
 async function loadPanel() {
   const version = ++loadVersion
   clearPollTimer()
-  if (!props.dayKey) {
+  if (!props.dayKey || viewMode.value !== 'day') {
     day.value = null
     return
   }
@@ -294,9 +296,9 @@ function errorMessage(error: unknown): string {
 }
 
 watch(
-  () => [props.sessionId, props.dayKey],
-  () => {
-    clearTopicSelection()
+  () => [props.sessionId, props.dayKey, viewMode.value],
+  (next, previous) => {
+    if (next[0] !== previous?.[0] || viewMode.value === 'day' || previous?.[2] === 'day') clearTopicSelection()
     void loadPanel()
   },
   { immediate: true }
@@ -322,7 +324,7 @@ onUnmounted(() => {
         {{ t('records.topics.batchSummarize') }}
       </UButton>
       <UButton
-        v-if="day"
+        v-if="day && viewMode === 'day'"
         icon="i-heroicons-trash"
         color="neutral"
         variant="ghost"
@@ -332,13 +334,39 @@ onUnmounted(() => {
       />
     </Teleport>
 
-    <p v-if="dayKey" class="shrink-0 px-3 pt-3 text-xs tabular-nums text-gray-400">{{ dayKey }}</p>
+    <div
+      class="flex shrink-0 gap-1 border-b border-gray-100 p-2 dark:border-gray-800"
+      role="group"
+      :aria-label="t('records.topics.feed.views')"
+    >
+      <UButton
+        v-for="mode in ['updates', 'all', 'day'] as const"
+        :key="mode"
+        size="xs"
+        :color="viewMode === mode ? 'primary' : 'neutral'"
+        :variant="viewMode === mode ? 'soft' : 'ghost'"
+        :aria-pressed="viewMode === mode"
+        @click="viewMode = mode"
+      >
+        {{ t(`records.topics.feed.${mode}`) }}
+      </UButton>
+    </div>
+    <ChatTopicFeedPanel
+      v-if="viewMode !== 'day'"
+      :session-id="sessionId"
+      :mode="viewMode"
+      @jump-to-message="emit('jump-to-message', $event)"
+      @highlight-topic="emit('highlight-topic', $event)"
+    />
+    <p v-if="viewMode === 'day' && dayKey" class="shrink-0 px-3 pt-3 text-xs tabular-nums text-gray-400">
+      {{ dayKey }}
+    </p>
 
-    <div v-if="loading" class="flex flex-1 items-center justify-center">
+    <div v-if="viewMode === 'day' && loading" class="flex flex-1 items-center justify-center">
       <UIcon name="i-heroicons-arrow-path" class="h-4 w-4 animate-spin text-gray-400" />
     </div>
 
-    <div v-else class="min-h-0 flex-1 overflow-y-auto p-3">
+    <div v-else-if="viewMode === 'day'" class="min-h-0 flex-1 overflow-y-auto p-3">
       <section
         v-if="run && (activeRun || resumableRun)"
         class="mb-3 rounded-xl border border-primary-200/70 bg-white p-3 dark:border-primary-900/60 dark:bg-gray-900/50"

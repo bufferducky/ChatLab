@@ -4,8 +4,10 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import Fastify from 'fastify'
+import Database from 'better-sqlite3'
+import { CHAT_DB_SCHEMA } from '@openchatlab/core'
+import { DatabaseManager, createDatabaseManagerAdapter } from '@openchatlab/node-runtime'
 import type { PathProvider } from '@openchatlab/core'
-import type { SessionRuntimeAdapter } from '@openchatlab/node-runtime'
 import { registerAiChatTopicRoutes } from './ai-chat-topics'
 
 const nativeBinding = path.resolve('apps/cli/native/better_sqlite3.node')
@@ -26,8 +28,19 @@ test('chat topic routes expose persisted run state and reject generation without
   }
   const app = Fastify()
   t.after(() => app.close())
+  fs.mkdirSync(pathProvider.getDatabaseDir(), { recursive: true })
+  const database = new Database(path.join(pathProvider.getDatabaseDir(), 'group.db'), { nativeBinding })
+  database.exec(CHAT_DB_SCHEMA)
+  database
+    .prepare(
+      "INSERT INTO meta (name, platform, type, imported_at, schema_version) VALUES ('Test', 'qq', 'group', 0, 10)"
+    )
+    .run()
+  database.close()
+  const manager = new DatabaseManager(pathProvider, { nativeBinding, runtime: { version: '0.35.1', kind: 'cli' } })
+  t.after(() => manager.closeAll())
   registerAiChatTopicRoutes(app, {
-    sessionAdapter: {} as SessionRuntimeAdapter,
+    sessionAdapter: createDatabaseManagerAdapter(manager),
     pathProvider,
     runtimeIdentity: { version: '0.35.1', kind: 'cli' },
     nativeBinding,
@@ -69,4 +82,35 @@ test('chat topic routes expose persisted run state and reject generation without
   })
   assert.equal(invalidStartDay.statusCode, 400)
   assert.match(invalidStartDay.json().message, /Invalid day key/)
+
+  const feed = await app.inject({ method: 'GET', url: '/_web/sessions/group/topics/feed' })
+  assert.equal(feed.statusCode, 200)
+  assert.equal(feed.json().settings.startTime, '09:30')
+  assert.equal(feed.json().settings.endTime, '23:40')
+  assert.equal(feed.json().modelConfigured, false)
+
+  const changed = { ...feed.json().settings, enabled: false, startTime: '10:00', endTime: '22:00' }
+  const save = await app.inject({ method: 'PUT', url: '/_web/sessions/group/topics/automation', payload: changed })
+  assert.equal(save.statusCode, 200)
+  assert.deepEqual(save.json().settings, changed)
+  const invalid = await app.inject({
+    method: 'PUT',
+    url: '/_web/sessions/group/topics/automation',
+    payload: { ...changed, startTime: '25:00' },
+  })
+  assert.equal(invalid.statusCode, 400)
+  assert.deepEqual(
+    (await app.inject({ method: 'GET', url: '/_web/sessions/group/topics/feed' })).json().settings,
+    changed
+  )
+
+  const read = await app.inject({
+    method: 'POST',
+    url: '/_web/sessions/group/topics/feed/read',
+    payload: { topics: [{ id: 't1', version: -1 }] },
+  })
+  assert.equal(read.statusCode, 400)
+  const emptyUpdate = await app.inject({ method: 'POST', url: '/_web/sessions/group/topics/feed/update' })
+  assert.equal(emptyUpdate.statusCode, 200)
+  assert.equal(emptyUpdate.body, 'null')
 })

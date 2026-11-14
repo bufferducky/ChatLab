@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.38.0 (2026-11-14)
+
+> Improve conversation reading, continuous topics and local image delivery, with verified personal GitHub releases for macOS and Windows.
+
+### ✨ Features
+
+- Add stable sender colors, grouped consecutive messages, reply navigation and previous/next sender-message navigation.
+- Schedule topic organization per conversation, continue discussions across days, and track progress, evidence and unread versions alongside daily history.
+- Extend group highlights with reading, save, skip and feedback actions, model usage, budgets and source navigation.
+
+### ⚡ Performance
+
+- Separate Telegram history pacing from media scheduling; prioritize original clicks and visible previews while background downloads yield between chunks.
+- Coalesce and promote image downloads, cancel abandoned readers and honor server cooldowns; cached previews and originals remain available offline.
+
+### 🐛 Bug Fixes
+
+- Keep native search identifiers out of QQ message bodies and resolve replies within their conversation without changing stable message IDs.
+- Bound QQ bridge queues and verify completion events, image resources and shutdown cleanup for multi-image reading.
+
+### 📝 Documentation
+
+- Replace upstream-only README content with personal project setup and installation guidance; anonymize public samples and unpublished commit identity.
+
+### 👷 CI
+
+- Build macOS Apple Silicon and Windows x64 installers from version tags; publish detailed notes, source identity and checksums only after redownloading and verifying the draft.
+
 ## v0.37.7 (2026-10-30)
 
 > Fix Discord direct message detection and repeat-import matching, and improve MCP read-only queries and safety checks.

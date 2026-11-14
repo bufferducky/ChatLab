@@ -33,6 +33,8 @@ export const MESSAGE_IMAGE_ERROR_CODES = [
   'QQ_OFFLINE',
   'QQ_BRIDGE_INCOMPATIBLE',
   'QQ_DOWNLOAD_TIMEOUT',
+  'IMAGE_RATE_LIMITED',
+  'IMAGE_TIMEOUT',
   'IMAGE_SOURCE_UNAVAILABLE',
 ] as const
 export type MessageImageErrorCode = (typeof MESSAGE_IMAGE_ERROR_CODES)[number]
@@ -45,6 +47,8 @@ const RETRYABLE_CODES = new Set<string>([
   'QQ_BRIDGE_UNAVAILABLE',
   'QQ_OFFLINE',
   'QQ_DOWNLOAD_TIMEOUT',
+  'IMAGE_RATE_LIMITED',
+  'IMAGE_TIMEOUT',
   'IMAGE_SOURCE_UNAVAILABLE',
 ])
 const DEFAULT_CODE_BY_STATUS: Record<number, MessageImageErrorCode> = {
@@ -54,7 +58,7 @@ const DEFAULT_CODE_BY_STATUS: Record<number, MessageImageErrorCode> = {
   409: 'IMAGE_REFERENCE_MISMATCH',
   413: 'IMAGE_TOO_LARGE',
   415: 'UNSUPPORTED_IMAGE',
-  429: 'QQ_IMAGE_BUSY',
+  429: 'IMAGE_RATE_LIMITED',
   502: 'QQ_DOWNLOAD_FAILED',
   503: 'QQ_BRIDGE_UNAVAILABLE',
   504: 'QQ_DOWNLOAD_TIMEOUT',
@@ -64,13 +68,21 @@ export class MessageImageError extends Error {
   readonly statusCode: number
   readonly code: MessageImageErrorCode
   readonly retryable: boolean
+  readonly retryAfterSeconds?: number
 
-  constructor(statusCode: number, message: string, code?: MessageImageErrorCode, retryable?: boolean) {
+  constructor(
+    statusCode: number,
+    message: string,
+    code?: MessageImageErrorCode,
+    retryable?: boolean,
+    retryAfterSeconds?: number
+  ) {
     super(message)
     this.name = 'MessageImageError'
     this.statusCode = statusCode
     this.code = code ?? DEFAULT_CODE_BY_STATUS[statusCode] ?? 'IMAGE_SOURCE_UNAVAILABLE'
     this.retryable = retryable ?? RETRYABLE_CODES.has(this.code)
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -209,7 +221,15 @@ interface MessageImagesOptions {
 
 /** Resolve attachments through the subscription that imported each message. */
 export class MessageImagesService {
-  private pending = new Map<string, Promise<ImageBytes>>()
+  private pending = new Map<
+    string,
+    {
+      promise: Promise<unknown>
+      controller: AbortController
+      subscribers: number
+    }
+  >()
+  private cancellation = new Map<string, boolean>()
   constructor(private options: MessageImagesOptions) {}
 
   private resolve(sessionId: string, messageId: number) {
@@ -235,20 +255,90 @@ export class MessageImagesService {
     const { source, remote } = matches[0]
     const base = source.baseUrl.replace(/\/+$/, '')
     const url = `${base}/sessions/${encodeURIComponent(remote)}/messages/${encodeURIComponent(message.platformMessageId)}/images`
-    return { url, token: source.token, platform: message.platform }
+    return { url, token: source.token, platform: message.platform, base }
   }
 
-  private async request(url: string, token: string) {
+  private async shared<T>(
+    key: string,
+    source: { base: string; token: string },
+    signal: AbortSignal | undefined,
+    operation: (signal: AbortSignal, requestId: string) => Promise<T>
+  ): Promise<T> {
+    signal?.throwIfAborted()
+    let entry = this.pending.get(key)
+    if (!entry) {
+      const controller = new AbortController()
+      const requestId = randomUUID()
+      const combined = AbortSignal.any([controller.signal, AbortSignal.timeout(65_000)])
+      const cancel = () => {
+        if (this.cancellation.get(source.base)) {
+          void (this.options.fetch ?? fetch)(`${source.base}/image-requests/${requestId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${source.token}` },
+            signal: AbortSignal.timeout(3_000),
+            redirect: 'error',
+          }).catch(() => {})
+        }
+      }
+      combined.addEventListener('abort', cancel, { once: true })
+      const created = { controller, subscribers: 0, promise: Promise.resolve() as Promise<unknown> }
+      created.promise = Promise.resolve()
+        .then(() => operation(combined, requestId))
+        .finally(() => {
+          combined.removeEventListener('abort', cancel)
+          if (this.pending.get(key) === created) this.pending.delete(key)
+        })
+      entry = created
+      this.pending.set(key, entry)
+    }
+    const current = entry
+    current.subscribers++
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => {
+        cleanup()
+        reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+      }
+      let finished = false
+      const cleanup = () => {
+        if (finished) return
+        finished = true
+        signal?.removeEventListener('abort', abort)
+        current.subscribers--
+        if (!current.subscribers && this.pending.get(key) === current) {
+          this.pending.delete(key)
+          current.controller.abort()
+        }
+      }
+      signal?.addEventListener('abort', abort, { once: true })
+      current.promise.then(
+        (value) => {
+          if (!finished) {
+            cleanup()
+            resolve(value as T)
+          }
+        },
+        (error) => {
+          if (!finished) {
+            cleanup()
+            reject(error)
+          }
+        }
+      )
+    })
+  }
+
+  private async request(url: string, token: string, signal?: AbortSignal, requestId?: string, base?: string) {
     let response: Response
     try {
       response = await (this.options.fetch ?? fetch)(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(65_000),
+        headers: { Authorization: `Bearer ${token}`, ...(requestId ? { 'X-Image-Request-Id': requestId } : {}) },
+        signal: signal ?? AbortSignal.timeout(65_000),
         redirect: 'error',
       })
     } catch {
-      throw new MessageImageError(503, 'Image source unavailable')
+      throw new MessageImageError(503, 'Image source unavailable', 'IMAGE_SOURCE_UNAVAILABLE')
     }
+    if (base) this.cancellation.set(base, response.headers.get('X-Image-Cancel-Protocol') === '1')
     if (!response.ok) {
       const detail = await this.sourceError(response)
       const status = response.status >= 400 && response.status <= 599 ? response.status : 502
@@ -256,13 +346,21 @@ export class MessageImagesService {
         detail.code && KNOWN_CODES.has(detail.code)
           ? (detail.code as MessageImageErrorCode)
           : (DEFAULT_CODE_BY_STATUS[status] ?? 'IMAGE_SOURCE_UNAVAILABLE')
-      throw new MessageImageError(status, detail.message ?? 'Image unavailable', code, detail.retryable)
+      throw new MessageImageError(
+        status,
+        detail.message ?? 'Image unavailable',
+        code,
+        detail.retryable,
+        detail.retryAfterSeconds
+      )
     }
     return response
   }
 
   /** Read the collector's controlled error payload without trusting arbitrary fields. */
-  private async sourceError(response: Response): Promise<{ code?: string; message?: string; retryable?: boolean }> {
+  private async sourceError(
+    response: Response
+  ): Promise<{ code?: string; message?: string; retryable?: boolean; retryAfterSeconds?: number }> {
     try {
       const raw = await this.readLimited(response, MAX_SOURCE_ERROR_BYTES)
       const payload = JSON.parse(raw.toString('utf8')) as {
@@ -270,6 +368,7 @@ export class MessageImagesService {
         error?: unknown
         message?: unknown
         retryable?: unknown
+        retryAfterSeconds?: unknown
       }
       const message =
         typeof payload.message === 'string'
@@ -281,63 +380,88 @@ export class MessageImagesService {
         code: typeof payload.code === 'string' ? payload.code : undefined,
         message: message ? message.slice(0, 200) : undefined,
         retryable: typeof payload.retryable === 'boolean' ? payload.retryable : undefined,
+        retryAfterSeconds: this.retrySeconds(response.headers.get('Retry-After'), payload.retryAfterSeconds),
       }
     } catch (error) {
-      if (error instanceof MessageImageError) return {}
-      return {}
+      if (error instanceof MessageImageError)
+        return { retryAfterSeconds: this.retrySeconds(response.headers.get('Retry-After')) }
+      return { retryAfterSeconds: this.retrySeconds(response.headers.get('Retry-After')) }
     }
   }
 
-  async manifest(sessionId: string, messageId: number): Promise<ImageManifest> {
+  private retrySeconds(header: string | null, body?: unknown): number | undefined {
+    const seconds = Math.max(
+      typeof body === 'number' && Number.isFinite(body) ? body : 0,
+      header && /^\d+(?:\.\d+)?$/.test(header) ? Number(header) : 0,
+      header && !/^\d+(?:\.\d+)?$/.test(header) ? (Date.parse(header) - Date.now()) / 1000 : 0
+    )
+    return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined
+  }
+
+  async manifest(sessionId: string, messageId: number, signal?: AbortSignal): Promise<ImageManifest> {
     const source = this.resolve(sessionId, messageId)
     const key = createHash('sha256').update(source.url).digest('hex')
     const cached = await this.options.cache.get(key)
     if (cached) return JSON.parse(cached.data.toString('utf8'))
-    const response = await this.request(source.url, source.token)
-    let data: ImageManifest
-    try {
-      data = JSON.parse((await this.readLimited(response, 256 * 1024)).toString('utf8'))
-    } catch {
-      throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
-    }
-    if (
-      !Array.isArray(data.images) ||
-      data.images.length > 100 ||
-      !data.images.every((image: { index: unknown }, index: number) => image?.index === index)
-    )
-      throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
-    const manifest = {
-      images: data.images.map((image: { index: number }) => ({ index: image.index })),
-      caption: typeof data.caption === 'string' ? data.caption : '',
-    }
-    if (manifest.images.length)
-      await this.options.cache.put(key, { data: Buffer.from(JSON.stringify(manifest)), mime: 'application/json' })
-    return manifest
+    return this.shared(key, source, signal, async (combined, requestId) => {
+      const response = await this.request(source.url, source.token, combined, requestId, source.base)
+      let data: ImageManifest
+      try {
+        data = JSON.parse((await this.readLimited(response, 256 * 1024)).toString('utf8'))
+      } catch {
+        throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
+      }
+      if (
+        !Array.isArray(data.images) ||
+        data.images.length > 100 ||
+        !data.images.every((image: { index: unknown }, index: number) => image?.index === index)
+      )
+        throw new MessageImageError(502, 'Invalid image manifest', 'IMAGE_SOURCE_UNAVAILABLE')
+      const manifest = {
+        images: data.images.map((image: { index: number }) => ({ index: image.index })),
+        caption: typeof data.caption === 'string' ? data.caption : '',
+      }
+      if (manifest.images.length)
+        await this.options.cache.put(key, { data: Buffer.from(JSON.stringify(manifest)), mime: 'application/json' })
+      return manifest
+    })
   }
 
-  async image(sessionId: string, messageId: number, index: number, size: 'preview' | 'original'): Promise<ImageBytes> {
+  async image(
+    sessionId: string,
+    messageId: number,
+    index: number,
+    size: 'preview' | 'original',
+    signal?: AbortSignal
+  ): Promise<ImageBytes> {
     const source = this.resolve(sessionId, messageId)
     const url = `${source.url}/${index}?size=${size}`
     const key = createHash('sha256').update(url).digest('hex')
     const cached = await this.options.cache.get(key)
     if (cached) return cached
-    const pending = this.pending.get(key)
-    if (pending) return pending
-    const request = this.download(url, source.token, size, source.platform, key)
-    this.pending.set(key, request)
-    try {
-      return await request
-    } finally {
-      this.pending.delete(key)
+    // A fresh runtime may already have cached manifests; discover capability using
+    // a bounded local request before relying on the cancellation protocol.
+    if (source.platform === 'telegram' && !this.cancellation.has(source.base)) {
+      try {
+        const response = await (this.options.fetch ?? fetch)(`${source.base}/image-capabilities`, {
+          headers: { Authorization: `Bearer ${source.token}` },
+          signal: AbortSignal.any([signal ?? new AbortController().signal, AbortSignal.timeout(2_000)]),
+          redirect: 'error',
+        })
+        this.cancellation.set(source.base, response.headers.get('X-Image-Cancel-Protocol') === '1')
+        await response.body?.cancel()
+      } catch {
+        this.cancellation.set(source.base, false)
+      }
     }
-  }
-
-  private async download(url: string, token: string, size: 'preview' | 'original', platform: string, key: string) {
-    const data = await this.readLimited(await this.request(url, token), MAX_IMAGE_BYTES)
-    const image = await prepareMessageImage(data, size)
-    // QQ originals stay in QQ's own cache. Only their small previews are copied.
-    if (size === 'preview' || platform !== 'qq') await this.options.cache.put(key, image)
-    return image
+    return this.shared(key, source, signal, async (combined, requestId) => {
+      const response = await this.request(url, source.token, combined, requestId, source.base)
+      const data = await this.readLimited(response, MAX_IMAGE_BYTES)
+      combined.throwIfAborted()
+      const image = await prepareMessageImage(data, size)
+      if (size === 'preview' || source.platform !== 'qq') await this.options.cache.put(key, image)
+      return image
+    })
   }
 
   private async readLimited(response: Response, limit: number) {

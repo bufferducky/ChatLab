@@ -106,13 +106,18 @@ test('image failures keep the unified envelope, business code and Retry-After', 
   })
 
   status = 429
-  payload = { error: 'QQ image download is busy', code: 'QQ_IMAGE_BUSY', retryable: true }
+  payload = { error: 'Telegram media cooling down', code: 'IMAGE_RATE_LIMITED', retryable: true, retryAfterSeconds: 37 }
   const busy = await app.inject('/_web/sessions/local/messages/7/images/0?size=preview')
   assert.equal(busy.statusCode, 429)
-  assert.equal(busy.headers['retry-after'], '2')
+  assert.equal(busy.headers['retry-after'], '37')
   assert.deepEqual(busy.json(), {
     success: false,
-    error: { code: 'QQ_IMAGE_BUSY', message: 'QQ image download is busy', retryable: true },
+    error: {
+      code: 'IMAGE_RATE_LIMITED',
+      message: 'Telegram media cooling down',
+      retryable: true,
+      retryAfterSeconds: 37,
+    },
   })
 
   for (const [path, statusCode] of [

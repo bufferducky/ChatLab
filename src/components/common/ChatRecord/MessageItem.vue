@@ -5,10 +5,12 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
 
 import { analyzeMessyContent } from './messy-content'
 import type { ChatRecordMessage } from './types'
 import { chatTopicColorStyle } from './topic-highlight'
+import { getSenderColor, getSenderInitials } from './sender-presentation'
 import { useSessionStore } from '@/stores/session'
 import { IS_WEB_WASM } from '@/utils/platform'
 import MessageImages from './MessageImages.vue'
@@ -26,13 +28,21 @@ const props = defineProps<{
   highlightKeywords?: string[]
   /** 是否处于筛选模式（显示上下文按钮） */
   isFiltered?: boolean
+  /** Hide repeated identity within a continuous run of messages. */
+  isContinuation?: boolean
+  /** Highlight all messages from the selected member. */
+  isSenderFocused?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'view-context', messageId: number): void
+  (e: 'focus-sender', message: ChatRecordMessage): void
+  (e: 'jump-to-reply', messageId: number): void
 }>()
 
 const sessionStore = useSessionStore()
+const messageTime = computed(() => dayjs.unix(props.message.timestamp))
+const fullMessageTime = computed(() => messageTime.value.format('YYYY-MM-DD HH:mm:ss'))
 const imageCaption = ref<string | null>(null)
 const canLoadImages = computed(
   () =>
@@ -95,34 +105,15 @@ const displayName = computed(() => {
   return name
 })
 
-// 获取头像字符（支持 emoji）
-const avatarLetter = computed(() => {
-  const name = props.message.senderName || ''
-  if (!name) return '?'
-
-  // 使用 Intl.Segmenter 正确分割字符串（包括 emoji）
-  // 对于不支持的浏览器，使用 spread operator 作为 fallback
-  try {
-    const segmenter = new Intl.Segmenter('zh', { granularity: 'grapheme' })
-    const segments = [...segmenter.segment(name)]
-    if (segments.length > 0) {
-      return segments[0].segment
-    }
-  } catch {
-    // Fallback: 使用 spread operator 处理 emoji
-    const chars = [...name]
-    if (chars.length > 0) {
-      const firstChar = chars[0]
-      // 检查是否是字母或汉字，如果是则转大写
-      if (/^[a-zA-Z]$/.test(firstChar)) {
-        return firstChar.toUpperCase()
-      }
-      return firstChar
-    }
-  }
-
-  return '?'
-})
+const avatarLetter = computed(() => getSenderInitials(props.message.senderName))
+const senderColor = computed(() =>
+  getSenderColor(sessionStore.currentSession?.platform ?? '', props.message.senderPlatformId)
+)
+const focusLabel = computed(() =>
+  t(props.isSenderFocused ? 'records.messageItem.unhighlightSender' : 'records.messageItem.highlightSender', {
+    name: displayName.value,
+  })
+)
 
 const HIGHLIGHT_MARK_CLASS =
   'bg-transparent text-inherit underline decoration-primary-500/80 underline-offset-4 dark:decoration-primary-400/80'
@@ -159,45 +150,103 @@ function highlightContent(content: string): string {
 </script>
 
 <template>
-  <div class="group px-4 py-1.5 transition-colors" :class="[isTarget ? targetColor : '']">
+  <div
+    class="group px-4 pb-1 transition-colors"
+    :class="[isContinuation ? 'pt-0.5' : 'pt-3', isTarget ? targetColor : '']"
+    :data-sender-id="message.senderPlatformId"
+    :data-sender-focused="isSenderFocused || undefined"
+    :data-continuation="isContinuation || undefined"
+  >
     <!-- Owner 消息显示在右侧 -->
     <div class="flex gap-2.5" :class="isOwner ? 'flex-row-reverse' : ''">
       <!-- 头像 -->
-      <div
-        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-300 text-xs font-medium text-gray-700 overflow-hidden dark:bg-gray-600 dark:text-gray-100"
+      <button
+        v-if="!isContinuation"
+        type="button"
+        class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold cursor-pointer transition-shadow hover:ring-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+        :class="[senderColor.avatar, senderColor.text, senderColor.ring, { 'ring-2': isSenderFocused }]"
+        :title="focusLabel"
+        :aria-label="focusLabel"
+        :aria-pressed="!!isSenderFocused"
+        @click="emit('focus-sender', message)"
       >
-        <img
-          v-if="message.senderAvatar"
-          :src="message.senderAvatar"
-          :alt="message.senderName"
-          class="h-full w-full object-cover"
-        />
+        <img v-if="message.senderAvatar" :src="message.senderAvatar" alt="" class="h-full w-full object-cover" />
         <span v-else>{{ avatarLetter }}</span>
-      </div>
+      </button>
+      <div v-else class="w-8 shrink-0" aria-hidden="true" />
 
       <!-- 消息内容区 -->
       <div class="min-w-0 flex-1" :class="isOwner ? 'flex flex-col items-end' : ''">
         <!-- 发送者名称 -->
-        <div class="mb-0.5 flex items-center gap-2" :class="isOwner ? 'flex-row-reverse' : ''">
-          <span class="text-xs text-chat-muted dark:text-chat-muted-dark">
+        <div v-if="!isContinuation" class="mb-1 flex items-center gap-2" :class="isOwner ? 'flex-row-reverse' : ''">
+          <button
+            type="button"
+            class="text-left text-xs font-semibold cursor-pointer hover:underline underline-offset-2 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+            :class="senderColor.text"
+            :title="focusLabel"
+            :aria-label="focusLabel"
+            :aria-pressed="!!isSenderFocused"
+            @click="emit('focus-sender', message)"
+          >
             {{ displayName }}
-          </span>
+          </button>
+          <time
+            class="shrink-0 text-[11px] tabular-nums text-gray-500 dark:text-gray-400"
+            :datetime="messageTime.toISOString()"
+            :title="fullMessageTime"
+            :aria-label="fullMessageTime"
+          >
+            {{ messageTime.format('HH:mm') }}
+          </time>
         </div>
+        <span v-else class="sr-only">{{ displayName }}</span>
 
         <!-- 气泡和上下文按钮 -->
         <div class="flex min-w-0 max-w-[min(88%,46rem)] items-start gap-1" :class="isOwner ? 'flex-row-reverse' : ''">
           <div
             class="relative min-w-0 max-w-full rounded-xl px-3 py-2"
-            :class="isOwner ? 'bg-chat-owner dark:bg-chat-owner-dark' : 'bg-chat-bubble dark:bg-chat-bubble-dark'"
+            :class="[
+              isOwner ? 'bg-chat-owner dark:bg-chat-owner-dark' : 'bg-chat-bubble dark:bg-chat-bubble-dark',
+              isSenderFocused ? ['ring-2 ring-inset', senderColor.ring] : '',
+            ]"
           >
             <!-- 回复引用样式 -->
-            <div
+            <button
               v-if="message.replyToMessageId"
-              class="mb-2 border-l-2 border-primary-400 dark:border-primary-500 pl-2.5 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-500/5 dark:bg-white/5 rounded-r"
+              type="button"
+              class="mb-2 block w-full rounded-r border-l-2 border-primary-400 bg-gray-500/5 py-1 pl-2.5 pr-2 text-left text-xs text-gray-500 transition-colors enabled:cursor-pointer enabled:hover:bg-gray-500/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 disabled:cursor-default dark:border-primary-500 dark:bg-white/5 dark:text-gray-400 dark:enabled:hover:bg-white/10"
+              :disabled="!message.replyToInternalId"
+              :title="
+                t(
+                  message.replyToInternalId
+                    ? 'records.messageItem.jumpToOriginal'
+                    : 'records.messageItem.originalNotImported'
+                )
+              "
+              :aria-label="
+                t(
+                  message.replyToInternalId
+                    ? 'records.messageItem.jumpToOriginal'
+                    : 'records.messageItem.originalNotImported'
+                )
+              "
+              @click="message.replyToInternalId && emit('jump-to-reply', message.replyToInternalId)"
             >
-              <span class="font-medium text-gray-600 dark:text-gray-300">{{ t('records.messageItem.replyTo') }}</span>
-              <span v-if="message.replyToSenderName" class="ml-1 font-semibold text-gray-700 dark:text-gray-200">
-                {{ message.replyToSenderName }}
+              <span class="flex items-center gap-1">
+                <span class="shrink-0 font-medium text-gray-600 dark:text-gray-300">
+                  {{ t('records.messageItem.replyTo') }}
+                </span>
+                <span
+                  v-if="message.replyToSenderName"
+                  class="min-w-0 truncate font-semibold text-gray-700 dark:text-gray-200"
+                >
+                  {{ message.replyToSenderName }}
+                </span>
+                <UIcon
+                  v-if="message.replyToInternalId"
+                  name="i-heroicons-arrow-up-left"
+                  class="ml-auto h-3.5 w-3.5 shrink-0"
+                />
               </span>
               <p
                 v-if="message.replyToContent"
@@ -205,7 +254,10 @@ function highlightContent(content: string): string {
               >
                 {{ message.replyToContent }}
               </p>
-            </div>
+              <span v-if="!message.replyToInternalId" class="mt-1 block text-[11px]">
+                {{ t('records.messageItem.originalNotImported') }}
+              </span>
+            </button>
             <MessageImages
               v-if="canLoadImages && sessionStore.currentSessionId"
               :session-id="sessionStore.currentSessionId"
@@ -254,6 +306,16 @@ function highlightContent(content: string): string {
               </span>
             </button>
           </div>
+
+          <time
+            v-if="isContinuation"
+            class="mb-1 shrink-0 self-end text-[11px] tabular-nums text-gray-500 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 dark:text-gray-400"
+            :datetime="messageTime.toISOString()"
+            :title="fullMessageTime"
+            :aria-label="fullMessageTime"
+          >
+            {{ messageTime.format('HH:mm') }}
+          </time>
 
           <!-- 上下文查看按钮 -->
           <button

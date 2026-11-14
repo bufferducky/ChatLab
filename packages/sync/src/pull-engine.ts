@@ -209,6 +209,7 @@ export class PullEngine {
   private pullingSourceIds = new Set<string>()
   private progressMap = new Map<string, PullProgress>()
   private sourceUnavailableLogs = new Map<string, { detail: string; lastLoggedAt: number }>()
+  private readonly sessionImportedListeners = new Set<(sessionId: string) => void>()
 
   constructor(options: PullEngineOptions) {
     this.fetcher = options.fetcher
@@ -222,6 +223,13 @@ export class PullEngine {
 
   getProgress(): PullProgress[] {
     return Array.from(this.progressMap.values())
+  }
+
+  subscribeSessionImported(listener: (sessionId: string) => void): () => void {
+    this.sessionImportedListeners.add(listener)
+    return () => {
+      this.sessionImportedListeners.delete(listener)
+    }
   }
 
   private async importTempFile(baseUrl: string, sess: ImportSession, tempFile: string): Promise<ImportResult> {
@@ -488,6 +496,15 @@ export class PullEngine {
           this.onSessionImported(sess.targetSessionId)
         } catch (hookErr) {
           this.logger.warn(`[Pull] onSessionImported hook failed for "${sess.name}": ${hookErr}`)
+        }
+      }
+      if (sess.targetSessionId) {
+        for (const listener of this.sessionImportedListeners) {
+          try {
+            listener(sess.targetSessionId)
+          } catch (error) {
+            this.logger.warn(`[Pull] Session imported listener failed: ${error}`)
+          }
         }
       }
       return { success: true, newMessageCount: totalNewMessages }

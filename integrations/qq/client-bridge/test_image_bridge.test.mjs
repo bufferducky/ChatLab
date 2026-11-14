@@ -35,7 +35,16 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
   const listeners = []
   const loginListeners = []
   const downloads = []
-  const options = { delay: 0, neverComplete: false, writeBytes: null, fileErrCode: 0, fileSrvErrCode: 0 }
+  const options = {
+    delay: 0,
+    neverComplete: false,
+    writeBytes: null,
+    fileErrCode: 0,
+    fileSrvErrCode: 0,
+    picture: null,
+    reportedPath: null,
+    completion: null,
+  }
   const service = {
     addKernelMsgListener(listener) {
       listeners.push(listener)
@@ -53,9 +62,12 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
               {
                 elementType: 2,
                 elementId: 'element-1',
-                picElement: pictureMd5
-                  ? { md5HexStr: pictureMd5.toUpperCase(), fileName: `${pictureMd5}.png` }
-                  : { fileName: 'image.bin' },
+                picElement: {
+                  ...(pictureMd5
+                    ? { md5HexStr: pictureMd5.toUpperCase(), fileName: `${pictureMd5}.png` }
+                    : { fileName: 'image.bin' }),
+                  ...options.picture,
+                },
               },
               { elementType: 1, elementId: 'element-0', textElement: { content: 'caption' } },
             ],
@@ -67,13 +79,16 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
       downloads.push(args)
       if (options.neverComplete) return {}
       const complete = () => {
-        fs.writeFileSync(args.filePath, options.writeBytes || image)
+        fs.writeFileSync(options.reportedPath || args.filePath, options.writeBytes || image)
         const data = {
           msgId: args.msgId,
           msgElementId: args.elementId,
-          filePath: args.filePath,
+          filePath: options.reportedPath || args.filePath,
           fileErrCode: options.fileErrCode,
           fileSrvErrCode: options.fileSrvErrCode,
+          fileDownType: 1,
+          thumbSize: 0,
+          ...options.completion,
         }
         for (const listener of listeners) {
           try {
@@ -109,9 +124,8 @@ function fakeQq({ image = IMAGE, pictureMd5 = md5(IMAGE), uid = UID, uin = UIN }
     logout() {
       loginListeners[0].onLogoutSucceed()
     },
-    completePending() {
-      assert.equal(downloads.length, 1)
-      const args = downloads[0]
+    completePending(index = 0) {
+      const args = downloads[index]
       fs.writeFileSync(args.filePath, image)
       const data = { msgId: args.msgId, msgElementId: args.elementId, filePath: args.filePath, fileErrCode: 0 }
       for (const listener of listeners) listener.onRichMediaDownloadComplete(data)
@@ -325,6 +339,125 @@ test('index, reference and integrity failures never return image bytes', async (
   assert.equal((await corrupt.json()).code, 'IMAGE_INTEGRITY_FAILED')
 })
 
+async function nativeVariant(t) {
+  const variant = Buffer.from('QQ-reencoded-full-size-image')
+  const context = await startBridge(t, {
+    bridge: { decodeImage: (bytes) => (bytes.equals(variant) ? { width: 1436, height: 1920 } : null) },
+  })
+  const { qq, qqRoot } = context
+  const folder = path.join(accountFolder(qqRoot, UID), 'nt_data', 'Pic', 'Ori')
+  fs.mkdirSync(folder, { recursive: true })
+  const file = path.join(folder, md5(IMAGE) + '.jpg')
+  qq.options.picture = { original: false, sourcePath: file, picWidth: 1436, picHeight: 1920 }
+  qq.options.reportedPath = file
+  qq.options.writeBytes = variant
+  qq.login()
+  return { ...context, variant, file }
+}
+
+test('a QQ full-size variant remains bound to its message and carries a separate byte checksum', async (t) => {
+  const { qq, bridge, baseUrl, variant } = await nativeVariant(t)
+  const response = await call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', validRequest())
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-qq-image-reference-md5'), md5(IMAGE))
+  assert.equal(response.headers.get('x-qq-image-content-md5'), md5(variant))
+  assert.equal(response.headers.get('x-qq-image-verification'), 'native-image-v1')
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), variant)
+  assert.equal(qq.downloads.length, 1)
+})
+
+test('native variant acceptance rejects wrong references, paths, thumbnails and invalid images', async (t) => {
+  const cases = [
+    [
+      'original',
+      ({ qq }) => {
+        qq.options.picture.original = true
+      },
+    ],
+    [
+      'reference',
+      ({ qq }) => {
+        qq.options.picture.md5HexStr = md5('other-message')
+      },
+    ],
+    [
+      'source path',
+      ({ qq, file }) => {
+        qq.options.picture.sourcePath = file + '.other'
+      },
+    ],
+    [
+      'thumbnail event',
+      ({ qq }) => {
+        qq.options.completion = { fileDownType: 2 }
+      },
+    ],
+    [
+      'thumbnail size',
+      ({ qq }) => {
+        qq.options.completion = { thumbSize: 720 }
+      },
+    ],
+    [
+      'dimensions',
+      ({ qq }) => {
+        qq.options.picture.picWidth = 700
+      },
+    ],
+    [
+      'invalid image',
+      ({ qq }) => {
+        qq.options.writeBytes = Buffer.from('truncated-image')
+      },
+    ],
+    [
+      'cache file name',
+      ({ qq, file }) => {
+        const other = path.join(path.dirname(file), md5('other-image') + '.jpg')
+        qq.options.reportedPath = other
+        qq.options.picture.sourcePath = other
+      },
+    ],
+    [
+      'other account',
+      ({ qq, qqRoot }) => {
+        const other = path.join(qqRoot, 'another-account', 'Ori', md5(IMAGE) + '.jpg')
+        fs.mkdirSync(path.dirname(other), { recursive: true })
+        qq.options.reportedPath = other
+        qq.options.picture.sourcePath = other
+      },
+    ],
+  ]
+  for (const [name, change] of cases) {
+    await t.test(name, async (t) => {
+      const context = await nativeVariant(t)
+      change(context)
+      const response = await call(context.baseUrl, context.bridge.token, 'POST', '/v1/images/fetch', validRequest())
+      assert.equal(response.status, 502)
+      assert.equal((await response.json()).code, 'IMAGE_INTEGRITY_FAILED')
+    })
+  }
+})
+
+test('a completion for a sibling attachment cannot fail the requested image', async (t) => {
+  const { qq, bridge } = await startBridge(t)
+  qq.login()
+  qq.options.neverComplete = true
+  const pending = bridge.fetchImage(validRequest()).catch((error) => error)
+  await new Promise((resolve) => setImmediate(resolve))
+  const args = qq.downloads[0]
+  fs.writeFileSync(args.filePath, 'another-attachment')
+  bridge.kernelListener.onRichMediaDownloadComplete({
+    msgId: args.msgId,
+    msgElementId: 'sibling-element',
+    filePath: args.filePath,
+    fileErrCode: 0,
+    fileSrvErrCode: 0,
+  })
+  qq.completePending()
+  assert.deepEqual(await pending, IMAGE)
+})
+
 test('concurrent requests for one attachment share a single native download', async (t) => {
   const { qq, bridge, baseUrl } = await startBridge(t)
   qq.login()
@@ -338,24 +471,89 @@ test('concurrent requests for one attachment share a single native download', as
   assert.equal(qq.downloads.length, 1)
 })
 
-test('the native download limit reports QQ_IMAGE_BUSY with Retry-After', async (t) => {
-  const { qq, bridge, baseUrl } = await startBridge(t, {
-    qqOptions: { pictureMd5: null },
-    bridge: { maxDownloads: 1 },
-  })
+test('a burst of images waits for download slots and automatically completes', async (t) => {
+  const { qq, bridge, baseUrl } = await startBridge(t)
   qq.login()
-  qq.options.delay = 60
-  const first = call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', validRequest())
-  while (!qq.downloads.length) await new Promise((resolve) => setTimeout(resolve, 2))
+  qq.options.delay = 15
+  let peak = 0
+  const download = qq.service.downloadRichMedia
+  qq.service.downloadRichMedia = (args) => {
+    peak = Math.max(peak, bridge.activeDownloads)
+    return download(args)
+  }
+  const responses = await Promise.all(
+    Array.from({ length: 6 }, (_, index) =>
+      call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', {
+        ...validRequest(),
+        msgId: String(BigInt(validRequest().msgId) + BigInt(index)),
+      })
+    )
+  )
+  for (const response of responses) {
+    assert.equal(response.status, 200)
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), IMAGE)
+  }
+  assert.equal(qq.downloads.length, 6)
+  assert.equal(peak, 2)
+})
+
+test('a full waiting queue reports QQ_IMAGE_BUSY but still shares duplicate requests', async (t) => {
+  const { qq, bridge, baseUrl } = await startBridge(t, { bridge: { maxDownloads: 1 } })
+  qq.login()
+  qq.options.neverComplete = true
+  const requests = Array.from({ length: 16 }, (_, index) => ({
+    ...validRequest(),
+    msgId: String(BigInt(validRequest().msgId) + BigInt(index)),
+  }))
+  const pending = requests.map((request) => bridge.fetchImage(request).catch((error) => error))
+  const duplicate = bridge.fetchImage(requests[1]).catch((error) => error)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(qq.downloads.length, 1)
   const busy = await call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', {
     ...validRequest(),
-    imageIndex: 0,
-    expectedMd5: md5('another'),
+    msgId: '9999999999999999999',
   })
   assert.equal(busy.status, 429)
   assert.equal(busy.headers.get('retry-after'), '2')
   assert.equal((await busy.json()).code, 'QQ_IMAGE_BUSY')
-  assert.equal((await first).status, 200)
+  qq.options.neverComplete = false
+  qq.completePending()
+  for (const result of await Promise.all([...pending, duplicate])) assert.deepEqual(result, IMAGE)
+  assert.equal(qq.downloads.length, 16)
+  assert.deepEqual(
+    qq.downloads.map((item) => item.msgId),
+    requests.map((item) => item.msgId)
+  )
+})
+
+test('waiting and downloading share one request deadline', async (t) => {
+  const { qq, bridge } = await startBridge(t, { bridge: { maxDownloads: 1, downloadTimeoutMs: 50 } })
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  bridge.now = () => Date.now()
+  qq.login()
+  qq.options.neverComplete = true
+  const first = bridge.fetchImage(validRequest())
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(10)
+  let settled = false
+  const second = bridge
+    .fetchImage({ ...validRequest(), msgId: '9007199254740994' })
+    .catch((error) => error)
+    .finally(() => {
+      settled = true
+    })
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(30)
+  qq.completePending()
+  assert.deepEqual(await first, IMAGE)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(qq.downloads.length, 2)
+  t.mock.timers.tick(19)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false)
+  t.mock.timers.tick(1)
+  assert.equal((await second).code, 'QQ_DOWNLOAD_TIMEOUT')
+  qq.completePending(1)
 })
 
 test('a timed-out native task keeps its slot until the late completion event', async (t) => {
@@ -371,17 +569,34 @@ test('a timed-out native task keeps its slot until the late completion event', a
   assert.equal(qq.downloads.length, 1)
 
   // The slot is still occupied until QQ reports the real completion.
-  const busy = await call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', {
+  const waiting = await call(baseUrl, bridge.token, 'POST', '/v1/images/fetch', {
     ...validRequest(),
     imageIndex: 0,
     expectedMd5: md5('another'),
   })
-  assert.equal(busy.status, 429)
+  assert.equal(waiting.status, 504)
+  assert.equal((await waiting.json()).code, 'QQ_DOWNLOAD_TIMEOUT')
+  assert.equal(qq.downloads.length, 1)
 
   qq.completePending()
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(bridge.activeDownloads, 0)
   assert.equal(fs.readdirSync(path.join(bridge.runtimeDir, 'image-downloads')).length, 0)
+  assert.equal(qq.downloads.length, 1)
+})
+
+test('logging out rejects queued images without starting more native downloads', async (t) => {
+  const { qq, bridge } = await startBridge(t, { bridge: { maxDownloads: 1 } })
+  qq.login()
+  qq.options.neverComplete = true
+  const first = bridge.fetchImage(validRequest())
+  const second = bridge.fetchImage({ ...validRequest(), msgId: '9007199254740994' }).catch((error) => error)
+  await new Promise((resolve) => setImmediate(resolve))
+  qq.logout()
+  assert.equal((await second).code, 'QQ_OFFLINE')
+  qq.completePending()
+  assert.deepEqual(await first, IMAGE)
+  assert.equal(qq.downloads.length, 1)
 })
 
 test('logout is reported and stops further downloads', async (t) => {

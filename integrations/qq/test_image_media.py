@@ -28,10 +28,20 @@ def digest(data):
 class FakeBridge:
     """A loopback stand-in for the in-QQ image bridge protocol."""
 
-    def __init__(self, home, *, data_dir=None, image=b"\x89PNG\r\n\x1a\noriginal", health=None, failure=None):
+    def __init__(
+        self,
+        home,
+        *,
+        data_dir=None,
+        image=b"\x89PNG\r\n\x1a\noriginal",
+        health=None,
+        failure=None,
+        headers=None,
+    ):
         self.token = TOKEN
         self.image = image
         self.failure = failure
+        self.headers = headers or {}
         self.requests = []
         self.health = {
             "protocolVersion": "1",
@@ -54,7 +64,14 @@ class FakeBridge:
 
             def authorized(self):
                 if self.headers.get("Authorization") != "Bearer " + outer.token:
-                    self.reply(401, {"error": "Unauthorized", "code": "UNAUTHORIZED", "retryable": False})
+                    self.reply(
+                        401,
+                        {
+                            "error": "Unauthorized",
+                            "code": "UNAUTHORIZED",
+                            "retryable": False,
+                        },
+                    )
                     return False
                 return True
 
@@ -62,7 +79,14 @@ class FakeBridge:
                 if not self.authorized():
                     return
                 if self.path != "/v1/health":
-                    return self.reply(404, {"error": "Not found", "code": "IMAGE_NOT_FOUND", "retryable": False})
+                    return self.reply(
+                        404,
+                        {
+                            "error": "Not found",
+                            "code": "IMAGE_NOT_FOUND",
+                            "retryable": False,
+                        },
+                    )
                 return self.reply(200, outer.health)
 
             def do_POST(self):
@@ -72,7 +96,14 @@ class FakeBridge:
                 payload = json.loads(self.rfile.read(length) or b"{}")
                 outer.requests.append(payload)
                 if self.path != "/v1/images/fetch":
-                    return self.reply(404, {"error": "Not found", "code": "IMAGE_NOT_FOUND", "retryable": False})
+                    return self.reply(
+                        404,
+                        {
+                            "error": "Not found",
+                            "code": "IMAGE_NOT_FOUND",
+                            "retryable": False,
+                        },
+                    )
                 if outer.failure:
                     return self.reply(*outer.failure)
                 return self.reply(200, outer.image)
@@ -80,8 +111,15 @@ class FakeBridge:
             def reply(self, status, value):
                 body = value if isinstance(value, bytes) else json.dumps(value).encode()
                 self.send_response(status)
-                self.send_header("Content-Type", "application/octet-stream" if isinstance(value, bytes) else "application/json")
+                self.send_header(
+                    "Content-Type",
+                    "application/octet-stream"
+                    if isinstance(value, bytes)
+                    else "application/json",
+                )
                 self.send_header("Content-Length", str(len(body)))
+                for key, header_value in outer.headers.items():
+                    self.send_header(key, header_value)
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -112,7 +150,9 @@ class FakeBridge:
 
 
 class ImageTests(unittest.TestCase):
-    def make_source(self, root, account, *, native_id="28070330", kind="group", snapshot=None):
+    def make_source(
+        self, root, account, *, native_id="28070330", kind="group", snapshot=None
+    ):
         root = Path(root)
         cache = Cache(root / "bridge")
         with cache.connect() as db:
@@ -140,7 +180,10 @@ class ImageTests(unittest.TestCase):
 
     def add_metadata(self, cache, item, message="mid"):
         with cache.connect() as db:
-            db.execute("INSERT OR REPLACE INTO image_metadata VALUES(?,?)", (message, json.dumps(item)))
+            db.execute(
+                "INSERT OR REPLACE INTO image_metadata VALUES(?,?)",
+                (message, json.dumps(item)),
+            )
 
     def test_duplicate_originals_and_thumbnail_only_messages_remain_viewable(self):
         with tempfile.TemporaryDirectory() as root:
@@ -163,13 +206,23 @@ class ImageTests(unittest.TestCase):
             reencoded = files[0].parent / ("f" * 32 + ".jpg")
             reencoded.write_bytes(b"\xff\xd8\xffreencoded-original")
             images, cache = self.make_source(root, account)
-            self.add_metadata(cache, {"attachments": [{"kind": "image", "name": value + ".png"}]})
-            self.add_metadata(cache, {"attachments": [{"kind": "image", "name": reencoded.name}]}, "reencoded")
+            self.add_metadata(
+                cache, {"attachments": [{"kind": "image", "name": value + ".png"}]}
+            )
+            self.add_metadata(
+                cache,
+                {"attachments": [{"kind": "image", "name": reencoded.name}]},
+                "reencoded",
+            )
             with cache.connect() as db:
-                db.execute("INSERT INTO messages(id,session_id,payload) VALUES('reencoded','sid','{}')")
+                db.execute(
+                    "INSERT INTO messages(id,session_id,payload) VALUES('reencoded','sid','{}')"
+                )
             # Multiple cache copies with the same verified digest are one image.
             self.assertEqual(images.resolve("sid", "mid", 0), original)
-            self.assertEqual(images.resolve("sid", "reencoded", 0), reencoded.read_bytes())
+            self.assertEqual(
+                images.resolve("sid", "reencoded", 0), reencoded.read_bytes()
+            )
             for file in files:
                 file.unlink()
             server = make_server(cache, {"token": "test-token", "port": 0}, images)
@@ -179,7 +232,10 @@ class ImageTests(unittest.TestCase):
 
             def get(size):
                 return urlopen(
-                    Request(url + "?size=" + size, headers={"Authorization": "Bearer test-token"}),
+                    Request(
+                        url + "?size=" + size,
+                        headers={"Authorization": "Bearer test-token"},
+                    ),
                     timeout=5,
                 )
 
@@ -192,7 +248,9 @@ class ImageTests(unittest.TestCase):
                 # The thumbnail is never promoted to an original: with no bridge
                 # running the request reports the online capability as unavailable.
                 self.assertEqual(caught.exception.code, 503)
-                self.assertEqual(json.loads(caught.exception.read())["code"], "QQ_BRIDGE_UNAVAILABLE")
+                self.assertEqual(
+                    json.loads(caught.exception.read())["code"], "QQ_BRIDGE_UNAVAILABLE"
+                )
                 caught.exception.close()
                 with self.assertRaises(HTTPError) as caught:
                     get("invalid")
@@ -225,31 +283,44 @@ class ImageTests(unittest.TestCase):
             body = field(40800, field(45002, 2) + field(45403, b"/synthetic/image.png"))
             with sqlite3.connect(data / "nt_msg.db") as db:
                 db.execute('CREATE TABLE group_msg_table("40001" INTEGER,"40800" BLOB)')
-                db.execute("INSERT INTO group_msg_table VALUES(?,?)", (9007199254740993, body))
+                db.execute(
+                    "INSERT INTO group_msg_table VALUES(?,?)", (9007199254740993, body)
+                )
             with cache.connect() as db:
                 db.execute(
                     "INSERT INTO messages(id,session_id,payload,native_table,native_id) VALUES('mid','sid',?, 'group_msg_table',?)",
-                    (json.dumps({"type": 1, "content": "old image marker"}), 9007199254740993),
+                    (
+                        json.dumps({"type": 1, "content": "old image marker"}),
+                        9007199254740993,
+                    ),
                 )
             backfill_image_metadata(data, cache)
             backfill_image_metadata(data, cache)
             with cache.connect() as db:
                 metadata = json.loads(
-                    db.execute("SELECT payload FROM image_metadata WHERE id='mid'").fetchone()[0]
+                    db.execute(
+                        "SELECT payload FROM image_metadata WHERE id='mid'"
+                    ).fetchone()[0]
                 )
-                self.assertEqual(metadata["attachments"][0]["native_paths"], ["/synthetic/image.png"])
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
                 self.assertEqual(
-                    json.loads(db.execute("SELECT payload FROM messages").fetchone()[0])["content"],
+                    metadata["attachments"][0]["native_paths"], ["/synthetic/image.png"]
+                )
+                self.assertEqual(
+                    db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1
+                )
+                self.assertEqual(
+                    json.loads(
+                        db.execute("SELECT payload FROM messages").fetchone()[0]
+                    )["content"],
                     "old image marker",
                 )
             # A conversation ingest records the native peer id used by the bridge.
             records = root / "records.db"
             with sqlite3.connect(records) as db:
                 db.executescript(
-                    '''CREATE TABLE actors(id TEXT,name TEXT);
+                    """CREATE TABLE actors(id TEXT,name TEXT);
                        CREATE TABLE conversations(id TEXT,name TEXT,kind TEXT,payload TEXT);
-                       CREATE TABLE messages(payload TEXT,created_at TEXT);'''
+                       CREATE TABLE messages(payload TEXT,created_at TEXT);"""
                 )
                 db.execute(
                     "INSERT INTO conversations VALUES('cid','Group','group',?)",
@@ -262,12 +333,23 @@ class ImageTests(unittest.TestCase):
                     "created_at": "2020-01-01T00:00:00Z",
                     "kind": "image",
                     "text": None,
-                    "provenance": {"table": "group_msg_table", "local_id": "9007199254740993"},
+                    "provenance": {
+                        "table": "group_msg_table",
+                        "local_id": "9007199254740993",
+                    },
                 }
-                db.execute("INSERT INTO messages VALUES(?,?)", (json.dumps(item), item["created_at"]))
+                db.execute(
+                    "INSERT INTO messages VALUES(?,?)",
+                    (json.dumps(item), item["created_at"]),
+                )
             cache.ingest(records, "account-a", bootstrap=True, now=1800000000)
             with cache.connect() as db:
-                self.assertEqual(db.execute("SELECT native_id FROM sessions WHERE id='cid'").fetchone()[0], "28070330")
+                self.assertEqual(
+                    db.execute(
+                        "SELECT native_id FROM sessions WHERE id='cid'"
+                    ).fetchone()[0],
+                    "28070330",
+                )
 
     def test_cached_images_use_paths_and_never_guess_by_filename(self):
         with tempfile.TemporaryDirectory() as root:
@@ -282,7 +364,13 @@ class ImageTests(unittest.TestCase):
                 cache,
                 {
                     "text": "caption",
-                    "attachments": [{"kind": "image", "name": "image.png", "native_paths": [str(image)]}],
+                    "attachments": [
+                        {
+                            "kind": "image",
+                            "name": "image.png",
+                            "native_paths": [str(image)],
+                        }
+                    ],
                 },
             )
             self.assertEqual(
@@ -292,20 +380,11 @@ class ImageTests(unittest.TestCase):
             self.assertEqual(images.resolve("sid", "mid", 0), image.read_bytes())
             with self.assertRaises(QQImageError) as caught:
                 images.resolve("wrong-session", "mid", 0)
-            self.assertEqual((caught.exception.status, caught.exception.code), (404, "MESSAGE_NOT_FOUND"))
+            self.assertEqual(
+                (caught.exception.status, caught.exception.code),
+                (404, "MESSAGE_NOT_FOUND"),
+            )
             # Without a cached path or original checksum the bridge must not guess.
-            with cache.connect() as db:
-                db.execute(
-                    "UPDATE image_metadata SET payload=? WHERE id='mid'",
-                    (
-                        json.dumps(
-                            {"text": "", "attachments": [{"kind": "image", "name": "image.png", "native_paths": []}]}
-                        ),
-                    ),
-                )
-            with self.assertRaises(QQImageError) as caught:
-                images.resolve("sid", "mid", 0)
-            self.assertEqual((caught.exception.status, caught.exception.code), (409, "IMAGE_REFERENCE_MISMATCH"))
             with cache.connect() as db:
                 db.execute(
                     "UPDATE image_metadata SET payload=? WHERE id='mid'",
@@ -314,7 +393,35 @@ class ImageTests(unittest.TestCase):
                             {
                                 "text": "",
                                 "attachments": [
-                                    {"kind": "image", "name": "image.png", "native_paths": [str(root / "outside.png")]}
+                                    {
+                                        "kind": "image",
+                                        "name": "image.png",
+                                        "native_paths": [],
+                                    }
+                                ],
+                            }
+                        ),
+                    ),
+                )
+            with self.assertRaises(QQImageError) as caught:
+                images.resolve("sid", "mid", 0)
+            self.assertEqual(
+                (caught.exception.status, caught.exception.code),
+                (409, "IMAGE_REFERENCE_MISMATCH"),
+            )
+            with cache.connect() as db:
+                db.execute(
+                    "UPDATE image_metadata SET payload=? WHERE id='mid'",
+                    (
+                        json.dumps(
+                            {
+                                "text": "",
+                                "attachments": [
+                                    {
+                                        "kind": "image",
+                                        "name": "image.png",
+                                        "native_paths": [str(root / "outside.png")],
+                                    }
                                 ],
                             }
                         ),
@@ -325,7 +432,9 @@ class ImageTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "IMAGE_REFERENCE_MISMATCH")
 
 
-@unittest.skipUnless(importlib.util.find_spec("qq_local_interface"), "Run with the QQ reader virtualenv")
+@unittest.skipUnless(
+    importlib.util.find_spec("qq_local_interface"), "Run with the QQ reader virtualenv"
+)
 class OnlineBridgeTests(unittest.TestCase):
     ORIGINAL = b"\x89PNG\r\n\x1a\nbridge-download"
     MD5 = hashlib.md5(ORIGINAL).hexdigest()
@@ -338,13 +447,18 @@ class OnlineBridgeTests(unittest.TestCase):
         self.cache = Cache(self.root / "bridge")
         with self.cache.connect() as db:
             db.execute("INSERT INTO state VALUES('bootstrapped','1')")
-            db.execute("INSERT INTO sessions(id,name,kind,native_id) VALUES('sid','Group','group','28070330')")
+            db.execute(
+                "INSERT INTO sessions(id,name,kind,native_id) VALUES('sid','Group','group','28070330')"
+            )
             db.execute(
                 "INSERT INTO messages(id,session_id,payload,native_id) VALUES('mid','sid','{}',?)",
                 (9007199254740993,),
             )
         self.vault = SimpleNamespace(
-            config=lambda: {"database_dir": str(self.account / "nt_db"), "account": dict(ACCOUNT)},
+            config=lambda: {
+                "database_dir": str(self.account / "nt_db"),
+                "account": dict(ACCOUNT),
+            },
             current=lambda: (self.root / "records", {"origin": ORIGIN}),
         )
         self.images = QQImages(SimpleNamespace(cache=self.cache, vault=self.vault))
@@ -369,11 +483,17 @@ class OnlineBridgeTests(unittest.TestCase):
             ],
         }
         with self.cache.connect() as db:
-            db.execute("INSERT OR REPLACE INTO image_metadata VALUES('mid',?)", (json.dumps(item),))
+            db.execute(
+                "INSERT OR REPLACE INTO image_metadata VALUES('mid',?)",
+                (json.dumps(item),),
+            )
 
     def bridge_start(self, **options):
         self.bridge = FakeBridge(
-            self.cache.root, data_dir=self.account, image=options.pop("image", self.ORIGINAL), **options
+            self.cache.root,
+            data_dir=self.account,
+            image=options.pop("image", self.ORIGINAL),
+            **options,
         )
         return self.bridge
 
@@ -407,7 +527,10 @@ class OnlineBridgeTests(unittest.TestCase):
         self.bridge_start(health={"accountUin": "999999999"})
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code), (409, "QQ_ACCOUNT_MISMATCH"))
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code),
+            (409, "QQ_ACCOUNT_MISMATCH"),
+        )
         self.assertEqual(self.bridge.requests, [])
 
     def test_data_directory_mismatch_blocks_downloads(self):
@@ -419,15 +542,22 @@ class OnlineBridgeTests(unittest.TestCase):
         }
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code), (409, "QQ_DATA_SOURCE_MISMATCH"))
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code),
+            (409, "QQ_DATA_SOURCE_MISMATCH"),
+        )
         self.assertEqual(self.bridge.requests, [])
 
     def test_offline_and_incompatible_bridges_are_explicit(self):
         self.attach()
-        self.bridge_start(health={"ready": False, "loggedIn": False, "accountUin": None})
+        self.bridge_start(
+            health={"ready": False, "loggedIn": False, "accountUin": None}
+        )
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code), (503, "QQ_OFFLINE"))
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code), (503, "QQ_OFFLINE")
+        )
         self.bridge.close()
         self.bridge_start(health={"capabilities": []})
         with self.assertRaises(QQImageError) as caught:
@@ -438,7 +568,10 @@ class OnlineBridgeTests(unittest.TestCase):
         self.attach()
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code), (503, "QQ_BRIDGE_UNAVAILABLE"))
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code),
+            (503, "QQ_BRIDGE_UNAVAILABLE"),
+        )
         bridge = self.bridge_start()
         bridge.discovery.chmod(0o644)
         with self.assertRaises(QQImageError) as caught:
@@ -447,21 +580,65 @@ class OnlineBridgeTests(unittest.TestCase):
 
     def test_bridge_business_errors_and_integrity_failures_are_controlled(self):
         self.attach()
-        self.bridge_start(failure=(429, {"error": "QQ image download is busy", "code": "QQ_IMAGE_BUSY", "retryable": True}))
+        self.bridge_start(
+            failure=(
+                429,
+                {
+                    "error": "QQ image download is busy",
+                    "code": "QQ_IMAGE_BUSY",
+                    "retryable": True,
+                },
+            )
+        )
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code, caught.exception.retryable), (429, "QQ_IMAGE_BUSY", True))
+        self.assertEqual(
+            (
+                caught.exception.status,
+                caught.exception.code,
+                caught.exception.retryable,
+            ),
+            (429, "QQ_IMAGE_BUSY", True),
+        )
         self.bridge.close()
         self.bridge_start(image=b"\x89PNG\r\n\x1a\nother")
         with self.assertRaises(QQImageError) as caught:
             self.images.resolve("sid", "mid", 0)
-        self.assertEqual((caught.exception.status, caught.exception.code), (502, "IMAGE_INTEGRITY_FAILED"))
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code),
+            (502, "IMAGE_INTEGRITY_FAILED"),
+        )
 
     def test_expected_md5_comes_from_native_identifiers_before_name(self):
         self.attach()
         bridge = self.bridge_start()
         self.images.resolve("sid", "mid", 0)
         self.assertEqual(bridge.requests[0]["expectedMd5"], self.MD5)
+
+    def test_native_variant_requires_both_reference_and_actual_byte_verification(self):
+        self.attach()
+        variant = b"\x89PNG\r\n\x1a\nQQ-full-size-variant"
+        valid = {
+            "X-QQ-Image-Verification": "native-image-v1",
+            "X-QQ-Image-Reference-MD5": self.MD5,
+            "X-QQ-Image-Content-MD5": digest(variant),
+        }
+        bridge = self.bridge_start(image=variant, headers=valid.copy())
+        self.assertEqual(self.images.resolve("sid", "mid", 0), variant)
+        for key, value in [
+            ("X-QQ-Image-Reference-MD5", digest(b"other-message")),
+            ("X-QQ-Image-Content-MD5", digest(b"corrupted-body")),
+            ("X-QQ-Image-Verification", "unknown-mode"),
+        ]:
+            with self.subTest(header=key):
+                bridge.headers = {**valid, key: value}
+                with self.assertRaises(QQImageError) as caught:
+                    self.images.resolve("sid", "mid", 0)
+                self.assertEqual(caught.exception.code, "IMAGE_INTEGRITY_FAILED")
+        bridge.headers = {}
+        with self.assertRaises(QQImageError) as caught:
+            self.images.resolve("sid", "mid", 0)
+        self.assertEqual(caught.exception.code, "IMAGE_INTEGRITY_FAILED")
 
     def test_collector_returns_controlled_error_to_chatlab(self):
         class Failing:

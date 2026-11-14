@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { AiRouteContext } from '../../context/ai'
 import type { RuntimeRouteContext } from '../../context/runtime'
 import type { StorageRouteContext } from '../../context/storage'
+import type { AutomationRouteHostContext } from '../../context/automation'
 import { registerAiAgentStreamRoutes } from './ai-agent-stream'
 import { registerAiAssistantRoutes } from './ai-assistants'
 import { registerAiChatRoutes } from './ai-chats'
@@ -18,6 +19,7 @@ import { registerAiToolRoutes } from './ai-tools'
 import { MemoryProvenanceCoordinator } from './memory-provenance-coordinator'
 
 export type AiRoutesContext = AiRouteContext &
+  AutomationRouteHostContext &
   Pick<RuntimeRouteContext, 'dbManager' | 'sessionAdapter' | 'pathProvider' | 'runtimeIdentity' | 'nativeBinding'> &
   Pick<StorageRouteContext, 'showInFolder'>
 

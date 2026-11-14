@@ -21,6 +21,7 @@ env:
 
 jobs:
   prepare_release:
+    if: github.repository == 'ChatLab/ChatLab'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}

@@ -1,11 +1,11 @@
 {
   "name": "ChatLab",
-  "version": "0.37.7",
+  "version": "0.38.0",
   "private": true,
   "description": "本地化的聊天记录分析工具，通过 SQL 和 AI Agent 回顾你的社交记忆",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ChatLab/ChatLab.git"
+    "url": "git+https://github.com/bufferducky/ChatLab.git"
   },
   "author": "digua <hello@digua.me>",
   "packageManager": "pnpm@11.21.0",

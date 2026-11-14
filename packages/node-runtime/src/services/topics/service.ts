@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type { PathProvider } from '@openchatlab/core'
-import type { ChatTopicDay, ChatTopicPreflight, ChatTopicRun, CreateChatTopicsRequest } from '@openchatlab/shared-types'
+import type {
+  ChatTopicAutomationSettings,
+  ChatTopicFeed,
+  ChatTopicDay,
+  ChatTopicPreflight,
+  ChatTopicRun,
+  CreateChatTopicsRequest,
+} from '@openchatlab/shared-types'
 import { appLogger } from '../../logging/app-logger'
 import { createAiTranslate } from '../../ai/i18n'
 import { isRuntimeVersionAtLeast, raiseDataDirMinRuntimeVersion, type RuntimeIdentity } from '../../data-dir-compat'
@@ -26,8 +33,18 @@ import {
 import { getChatTopicsDbPath } from './paths'
 import { createTopicPreflight, loadTopicSourceDay, type TopicSourceDay } from './source'
 import { ChatTopicStore, type TopicDayCheckpoint } from './store'
-import { assertValidTimezone, enumerateTopicDays } from './time'
+import { assertValidTimezone, enumerateTopicDays, formatTopicDayKey } from './time'
 import { chatTopicWorkCoordinator } from './work-coordinator'
+import {
+  validateTopicAutomation,
+  isTopicAutomationTime,
+  loadLiveTopicMessages,
+  countLiveTopicMessages,
+  selectLiveTopicCandidates,
+  buildLiveTopicPrompt,
+  applyLiveTopicResponse,
+  chunkTopicMessages,
+} from './live'
 
 export interface ChatTopicServiceDeps {
   runtime: SessionRuntimeAdapter
@@ -41,6 +58,13 @@ export interface ChatTopicServiceDeps {
 }
 
 export interface ChatTopicService {
+  trackSession(sessionId: string): void
+  noteSync(sessionId: string): void
+  tickAutomation(): void
+  getFeed(sessionId: string): ChatTopicFeed
+  setAutomation(sessionId: string, settings: ChatTopicAutomationSettings): ChatTopicFeed
+  updateFeed(sessionId: string): ChatTopicRun | null
+  markRead(sessionId: string, topics: Array<{ id: string; version: number }>): void
   preflight(sessionId: string, request: CreateChatTopicsRequest): ChatTopicPreflight
   start(sessionId: string, request: CreateChatTopicsRequest): ChatTopicRun
   generateDay(sessionId: string, dayKey: string, timezone: string, locale?: string): ChatTopicRun
@@ -95,6 +119,133 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   const unsubscribeCoordinator = chatTopicWorkCoordinator.subscribe(handleInteractiveStateChange)
   const unsubscribeSessionDelete = chatTopicWorkCoordinator.subscribeSessionDelete(prepareSessionDelete)
   const executionWaiters: Array<{ runId: string; resolve: () => void }> = []
+
+  function noteSync(sessionId: string): void {
+    assertOpen()
+    store.noteLiveSync(sessionId, now())
+    tickAutomation()
+  }
+
+  function trackSession(sessionId: string): void {
+    assertOpen()
+    store.ensureLiveSession(sessionId, now())
+  }
+
+  function getFeed(sessionId: string): ChatTopicFeed {
+    assertOpen()
+    const db = deps.runtime.ensureReadonly(sessionId)
+    const state = store.ensureLiveSession(sessionId, now())
+    const settings = state.settings
+    return {
+      settings,
+      withinSchedule: isTopicAutomationTime(settings, now()),
+      modelConfigured: Boolean(deps.getModelClient()),
+      pendingMessages: countLiveTopicMessages(db, state),
+      syncedAt: state.syncedAt,
+      processedAt: state.processedAt,
+      topics: store.getLiveTopics(sessionId),
+      run: getLatestRun(sessionId),
+    }
+  }
+
+  function setAutomation(sessionId: string, settings: ChatTopicAutomationSettings): ChatTopicFeed {
+    assertOpen()
+    deps.runtime.ensureReadonly(sessionId)
+    store.updateLiveSettings(sessionId, validateTopicAutomation(settings), now())
+    tickAutomation()
+    return getFeed(sessionId)
+  }
+
+  function markRead(sessionId: string, topics: Array<{ id: string; version: number }>): void {
+    assertOpen()
+    store.markLiveTopicsRead(sessionId, topics)
+  }
+
+  function updateFeed(sessionId: string): ChatTopicRun | null {
+    return startLiveRun(sessionId, false)
+  }
+
+  function startLiveRun(sessionId: string, automatic: boolean): ChatTopicRun | null {
+    assertOpen()
+    const state = store.ensureLiveSession(sessionId, now())
+    const messages = loadLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state)
+    if (!messages.length) return null
+    const model = requireModelClient()
+    const dayKey = formatTopicDayKey(Math.floor(now() / 1000), state.settings.timezone)
+    const run = createAndLaunchRun({
+      sessionId,
+      rangeKind: 'updates',
+      timezone: state.settings.timezone,
+      locale: state.settings.locale,
+      startDay: dayKey,
+      endDay: dayKey,
+      totalDays: 1,
+      totalBlocks: chunkTopicMessages(messages).length,
+      modelId: model.modelId,
+    })
+    store.setLiveRunAutomatic(run.id, automatic)
+    return run
+  }
+
+  function tickAutomation(): void {
+    if (closed || !deps.getModelClient()) return
+    store.recoverInterruptedRuns(now())
+    let active = store.getActiveRun()
+    if (
+      active?.status === 'paused' &&
+      active.rangeKind === 'updates' &&
+      store.isLiveRunAutomatic(active.id) &&
+      !activeExecution
+    ) {
+      const settings = store.getLiveSession(active.sessionId)?.settings
+      if (!settings || !isTopicAutomationTime(settings, now())) {
+        cancel(active.sessionId, active.id)
+        store.setLiveRunAutomatic(active.id, true)
+        active = null
+      }
+    }
+    if (active) {
+      if (active.rangeKind !== 'updates' || !store.isLiveRunAutomatic(active.id)) return
+      const state = store.getLiveSession(active.sessionId)
+      if (!state || !isTopicAutomationTime(state.settings, now())) {
+        if (activeExecution?.runId === active.id) {
+          activeExecution.requestedStatus = 'paused'
+          activeExecution.controller.abort()
+        } else if (preemptedRunId === active.id) {
+          preemptedRunId = null
+          updateRun(active, { status: 'paused' })
+        }
+        return
+      }
+      if (active.status === 'paused' && !activeExecution) {
+        resume(active.sessionId, active.id)
+        store.setLiveRunAutomatic(active.id, true)
+      }
+      return
+    }
+    for (const sessionId of store.listLiveSessions()) {
+      const state = store.getLiveSession(sessionId)!
+      if (!isTopicAutomationTime(state.settings, now())) continue
+      try {
+        const latest = store.getLatestRun(sessionId)
+        if (
+          latest?.rangeKind === 'updates' &&
+          latest.status === 'cancelled' &&
+          !store.isLiveRunAutomatic(latest.id) &&
+          (state.syncedAt ?? 0) <= latest.updatedAt
+        )
+          continue
+        if (latest?.rangeKind === 'updates' && latest.status === 'failed' && now() - latest.updatedAt < 5 * 60_000)
+          continue
+        if (countLiveTopicMessages(deps.runtime.ensureReadonly(sessionId), state) === 0) continue
+        startLiveRun(sessionId, true)
+        return
+      } catch (error) {
+        // A removed source or an occupied execution lease must not break message synchronization.
+        appLogger.warn('chat-topics', 'automatic topic update deferred', error)
+      }
+    }
+  }
 
   function preflight(sessionId: string, request: CreateChatTopicsRequest): ChatTopicPreflight {
     assertOpen()
@@ -154,7 +305,12 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     modelId: string
   }): ChatTopicRun {
     store.recoverInterruptedRuns(now())
-    const active = store.getActiveRun()
+    let active = store.getActiveRun()
+    if (active?.status === 'paused' && active.rangeKind === 'updates' && store.isLiveRunAutomatic(active.id)) {
+      cancel(active.sessionId, active.id)
+      store.setLiveRunAutomatic(active.id, true)
+      active = null
+    }
     if (active) {
       throw Object.assign(new Error(`A chat topic run is already ${active.status}`), {
         statusCode: 409,
@@ -215,6 +371,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
 
   function pause(sessionId: string, runId: string): ChatTopicRun {
     const run = requireRun(sessionId, runId)
+    if (run.rangeKind === 'updates') store.setLiveRunAutomatic(runId, false)
     if (run.status === 'pending' && activeExecution?.runId !== runId) {
       requireExecutionLease(runId)
       if (preemptedRunId === runId) preemptedRunId = null
@@ -234,6 +391,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   function resume(sessionId: string, runId: string): ChatTopicRun {
     const run = requireRun(sessionId, runId)
     if (run.status !== 'paused' && run.status !== 'failed') return run
+    if (run.rangeKind === 'updates') store.setLiveRunAutomatic(runId, false)
     requireModelClient()
     const active = store.getActiveRun()
     if (active && active.id !== runId) {
@@ -255,6 +413,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   function cancel(sessionId: string, runId: string): ChatTopicRun {
     const run = requireRun(sessionId, runId)
     if (run.status === 'completed' || run.status === 'cancelled') return run
+    if (run.rangeKind === 'updates') store.setLiveRunAutomatic(runId, false)
     if (activeExecution?.runId === runId) {
       preemptedRunId = null
       activeExecution.requestedStatus = 'cancelled'
@@ -360,6 +519,16 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     })
 
     try {
+      if (run.rangeKind === 'updates') {
+        run = await processLiveRun(run, modelClient, execution.controller.signal)
+        updateRun(run, { status: 'completed', currentBlockIndex: null, completedDays: 1 })
+        appLogger.info('chat-topics', 'continuous topic update completed', {
+          runId: run.id,
+          sessionId: run.sessionId,
+          modelCalls: run.modelCalls,
+        })
+        return
+      }
       const plans = buildRunPlan(run, modelClient.modelId)
       run = updateRun(run, {
         totalDays: plans.filter((plan) => !plan.skip).length,
@@ -397,6 +566,63 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       updateRun(latest, { status, lastError: message })
       if (!requestedStatus) appLogger.error('chat-topics', 'chat topic generation failed', error)
     }
+  }
+
+  async function processLiveRun(
+    initialRun: ChatTopicRun,
+    modelClient: ChatTopicModelClient,
+    signal: AbortSignal
+  ): Promise<ChatTopicRun> {
+    let run = initialRun
+    const db = deps.runtime.ensureReadonly(run.sessionId)
+    const state = store.getLiveSession(run.sessionId)!
+    const messages = loadLiveTopicMessages(db, state)
+    const blocks = chunkTopicMessages(messages)
+    run = updateRun(run, { totalBlocks: blocks.length, completedBlocks: 0 })
+    for (const block of blocks) {
+      signal.throwIfAborted()
+      const settings = store.getLiveSession(run.sessionId)!.settings
+      const candidates = selectLiveTopicCandidates(store.getLiveTopics(run.sessionId), block.messages)
+      const prompts = buildLiveTopicPrompt({
+        db,
+        sessionId: run.sessionId,
+        settings,
+        candidates,
+        block,
+        totalBlocks: blocks.length,
+      })
+      const result = await completeValidated(
+        run,
+        modelClient,
+        prompts,
+        signal,
+        (text) =>
+          applyLiveTopicResponse({
+            text,
+            sessionId: run.sessionId,
+            settings,
+            candidates,
+            block,
+            db,
+            now: now(),
+          }),
+        `chat-topics:${run.sessionId}:continuous`
+      )
+      run = result.run
+      signal.throwIfAborted()
+      store.saveLiveBatch(
+        {
+          sessionId: run.sessionId,
+          runId: run.id,
+          cursor: Math.max(...block.messages.map((message) => message.id)),
+          ...result.value,
+          now: now(),
+        },
+        executionLeaseGuard()
+      )
+      run = updateRun(run, { completedBlocks: run.completedBlocks + 1, currentBlockIndex: block.index + 1 })
+    }
+    return run
   }
 
   function buildRunPlan(run: ChatTopicRun, modelId: string): PlannedDay[] {
@@ -534,6 +760,13 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     let run = initialRun
     let lastValidationError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (run.rangeKind === 'updates' && store.isLiveRunAutomatic(run.id)) {
+        const settings = store.getLiveSession(run.sessionId)!.settings
+        if (!isTopicAutomationTime(settings, now())) {
+          if (activeExecution) activeExecution.requestedStatus = 'paused'
+          throw new Error('Automatic topic updates are outside the configured schedule')
+        }
+      }
       const attemptPrompts =
         attempt === 0
           ? prompts
@@ -755,6 +988,13 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   }
 
   return {
+    trackSession,
+    noteSync,
+    tickAutomation,
+    getFeed,
+    setAutomation,
+    updateFeed,
+    markRead,
     preflight,
     start,
     generateDay,

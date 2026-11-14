@@ -18,7 +18,7 @@ export interface TopicLedger {
   topics: TopicLedgerItem[]
 }
 
-export type TopicModelOperation =
+export type TopicModelOperation = { progress?: string } & (
   | {
       operation: 'create'
       localId: string
@@ -50,6 +50,7 @@ export type TopicModelOperation =
       summary?: string
       evidence: ChatTopicEvidence[]
     }
+)
 
 export interface TopicMessageAssignment {
   topicRef: string

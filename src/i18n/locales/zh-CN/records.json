@@ -18,7 +18,13 @@
     "tryAdjustFilter": "尝试调整筛选条件",
     "loadingMore": "加载更多...",
     "scrollUpForMore": "↑ 向上滚动加载更多",
-    "scrollDownForMore": "↓ 向下滚动加载更多"
+    "scrollDownForMore": "↓ 向下滚动加载更多",
+    "highlightingSender": "正在突出显示：{name}",
+    "clearSenderHighlight": "取消突出",
+    "senderPosition": "本段 {current} / {total} 条",
+    "senderNavigation": "浏览此成员的发言",
+    "previousSenderMessage": "上一条",
+    "nextSenderMessage": "下一条"
   },
   "filter": {
     "messageId": "消息 ID",
@@ -130,13 +136,57 @@
     "topicState": {
       "active": "进行中",
       "closed": "已告一段落"
+    },
+    "feed": {
+      "views": "话题视图",
+      "updates": "最近更新",
+      "all": "全部话题",
+      "day": "按日浏览",
+      "settings": "自动总结设置",
+      "schedule": "自动总结 {start}–{end} · {timezone}",
+      "syncedAt": "最近同步：{time}",
+      "processedAt": "最近整理：{time}",
+      "pending": "待整理 {count} 条消息",
+      "enable": "自动总结",
+      "startTime": "开始时间",
+      "endTime": "结束时间",
+      "timezone": "时区",
+      "scheduleHint": "时段外继续拉取消息，暂停 AI 总结；进入时段后合并补齐。首次整理最近 7 天，完整历史可通过批量总结查看。",
+      "save": "保存设置",
+      "updateNow": "立即更新",
+      "markShownRead": "当前列表标为已读",
+      "retry": "重试",
+      "search": "搜索话题或归纳",
+      "filterDate": "筛选有讨论的日期",
+      "unreadCount": "{count} 个话题有未读更新",
+      "noUpdates": "暂无未读的重要更新",
+      "noTopics": "暂无匹配的话题",
+      "emptyHint": "新话题和后续进展会在整理完成后出现在这里。",
+      "newTopic": "新话题",
+      "newProgress": "新进展",
+      "messageCount": "{count} 条相关消息",
+      "sinceRead": "自上次阅读后的进展",
+      "currentSummary": "当前归纳",
+      "viewOriginal": "查看原文",
+      "markRead": "标为已读",
+      "showMore": "显示更多",
+      "noModel": "请先配置快捷模型",
+      "processing": "正在整理最新消息",
+      "disabled": "自动总结已关闭",
+      "sleeping": "自动总结已暂停，时段内继续",
+      "waiting": "等待整理新消息",
+      "caughtUp": "已整理完待处理消息"
     }
   },
   "messageItem": {
     "viewContext": "查看上下文",
     "replyTo": "回复",
     "expandMessyContent": "展开完整内容",
-    "collapseMessyContent": "收起"
+    "collapseMessyContent": "收起",
+    "highlightSender": "突出显示 {name} 的发言",
+    "unhighlightSender": "取消突出 {name} 的发言",
+    "jumpToOriginal": "跳转到原消息",
+    "originalNotImported": "原消息未导入，暂时无法定位"
   },
   "images": {
     "image": "图片",
@@ -163,7 +213,10 @@
       "QQ_OFFLINE": "QQ 未登录或已离线，请登录后重试",
       "QQ_BRIDGE_INCOMPATIBLE": "当前 QQ 版本与取图桥接不兼容",
       "QQ_DOWNLOAD_TIMEOUT": "图片下载超时，请重试",
-      "IMAGE_SOURCE_UNAVAILABLE": "图片数据源暂不可用"
-    }
+      "IMAGE_SOURCE_UNAVAILABLE": "图片数据源暂不可用",
+      "IMAGE_RATE_LIMITED": "Telegram 请求受限，稍后重试",
+      "IMAGE_TIMEOUT": "图片加载超时，请重试"
+    },
+    "retryIn": "请求受限，{seconds} 秒后自动重试"
   }
 }

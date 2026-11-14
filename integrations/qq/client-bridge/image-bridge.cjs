@@ -22,6 +22,8 @@ const MAX_IMAGE_BYTES = 50 * 1024 * 1024
 const MAX_BODY_BYTES = 16 * 1024
 const DOWNLOAD_TIMEOUT_MS = 50_000
 const MAX_CONCURRENT_DOWNLOADS = 2
+const MAX_PENDING_FETCHES = 16
+const MAX_IMAGE_PIXELS = 40_000_000
 const CAPABILITY = 'fetch-image-original'
 const DISCOVERY_FILE = 'image-bridge.json'
 const DOWNLOAD_PREFIX = 'chatlab-image-'
@@ -103,6 +105,15 @@ function digest(value, algorithm = 'md5') {
 
 function normalizeMd5(value) {
   return typeof value === 'string' && /^[0-9a-fA-F]{32}$/.test(value) ? value.toLowerCase() : null
+}
+
+function decodeImage(bytes) {
+  try {
+    const image = require('electron').nativeImage.createFromBuffer(bytes)
+    return image.isEmpty() ? null : image.getSize()
+  } catch {
+    return null
+  }
 }
 
 function normalizeUin(value) {
@@ -253,6 +264,7 @@ class ImageBridge {
     this.downloadTimeoutMs = options.downloadTimeoutMs || DOWNLOAD_TIMEOUT_MS
     this.maxDownloads = options.maxDownloads || MAX_CONCURRENT_DOWNLOADS
     this.now = options.now || Date.now
+    this.decodeImage = options.decodeImage || decodeImage
     this.runtimeDir = path.join(this.home, 'runtime')
     this.downloadsDir = path.join(this.runtimeDir, 'image-downloads')
     this.discoveryPath = path.join(this.runtimeDir, DISCOVERY_FILE)
@@ -264,6 +276,8 @@ class ImageBridge {
     this.pending = new Map()
     this.entries = new Map()
     this.activeDownloads = 0
+    this.downloadQueue = []
+    this.stopping = false
     this.listenerInstalled = false
     this.sessions = []
     this.accountCache = null
@@ -326,6 +340,7 @@ class ImageBridge {
   // ---- lifecycle ---------------------------------------------------------
 
   async start() {
+    this.stopping = false
     ensureDirectory(this.home)
     ensureDirectory(this.runtimeDir)
     ensureDirectory(this.downloadsDir)
@@ -355,6 +370,8 @@ class ImageBridge {
   }
 
   async stop() {
+    this.stopping = true
+    this.rejectQueuedDownloads(new BridgeError(503, 'QQ_BRIDGE_UNAVAILABLE'))
     try {
       if (this.server) {
         await new Promise((resolve) => this.server.close(resolve))
@@ -373,6 +390,8 @@ class ImageBridge {
 
   /** Synchronous best-effort cleanup for process-exit hooks. */
   shutdownSync() {
+    this.stopping = true
+    this.rejectQueuedDownloads(new BridgeError(503, 'QQ_BRIDGE_UNAVAILABLE'))
     this.removeDiscovery()
     this.cleanupDownloads()
     this.entries.clear()
@@ -458,6 +477,7 @@ class ImageBridge {
   handleLoggedOut() {
     this.login = { loggedIn: false, uin: null, uid: null }
     this.accountCache = null
+    this.rejectQueuedDownloads(new BridgeError(503, 'QQ_OFFLINE'))
     this.log('info', 'QQ_LOGGED_OUT')
   }
 
@@ -626,8 +646,9 @@ class ImageBridge {
         } catch {
           throw new BridgeError(400, 'INVALID_IMAGE_REQUEST')
         }
-        const image = await this.fetchImage(validateFetchRequest(payload))
-        return this.respondBytes(response, image)
+        const specification = validateFetchRequest(payload)
+        const image = await this.fetchImage(specification)
+        return this.respondBytes(response, image, specification.expectedMd5)
       }
       throw new BridgeError(404, 'IMAGE_NOT_FOUND', 'Not found')
     } catch (error) {
@@ -682,12 +703,15 @@ class ImageBridge {
     response.end(body)
   }
 
-  respondBytes(response, body) {
+  respondBytes(response, body, referenceMd5) {
     response.writeHead(200, {
       'Content-Type': 'application/octet-stream',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Content-Length': String(body.length),
+      'X-QQ-Image-Reference-MD5': referenceMd5,
+      'X-QQ-Image-Content-MD5': digest(body),
+      'X-QQ-Image-Verification': 'native-image-v1',
     })
     response.end(body)
   }
@@ -700,6 +724,7 @@ class ImageBridge {
     )
     const running = this.pending.get(key)
     if (running) return running
+    if (this.pending.size >= MAX_PENDING_FETCHES) throw new BridgeError(429, 'QQ_IMAGE_BUSY')
     const task = this.executeFetch(request)
     this.pending.set(key, task)
     try {
@@ -709,7 +734,8 @@ class ImageBridge {
     }
   }
 
-  async executeFetch(request) {
+  assertReady() {
+    if (this.stopping) throw new BridgeError(503, 'QQ_BRIDGE_UNAVAILABLE')
     const health = this.healthPayload()
     if (!health.ready) {
       if (!health.sessionCaptured || !this.capabilityList().length) {
@@ -718,20 +744,29 @@ class ImageBridge {
       if (!health.loggedIn) throw new BridgeError(503, 'QQ_OFFLINE')
       throw new BridgeError(503, 'QQ_BRIDGE_INCOMPATIBLE')
     }
-    if (this.entries.size >= 16) throw new BridgeError(429, 'QQ_IMAGE_BUSY')
-    const { element } = await this.queryMessage(request)
+  }
+
+  async executeFetch(request) {
+    const deadline = this.now() + this.downloadTimeoutMs
+    this.assertReady()
+    const { element } = await this.beforeDeadline(this.queryMessage(request), deadline)
     const claimed = pictureMd5s(element)
     // When QQ reports picture hashes they must agree with the archived message.
     if (claimed.size && !claimed.has(request.expectedMd5)) {
       throw new BridgeError(409, 'IMAGE_REFERENCE_MISMATCH')
     }
-    if (this.activeDownloads >= this.maxDownloads) {
-      throw new BridgeError(429, 'QQ_IMAGE_BUSY')
-    }
-    this.activeDownloads += 1
-    const entry = this.startDownload(request, element)
+    await this.acquireDownload(deadline)
+    let entry
     try {
-      return await this.waitFor(entry)
+      this.assertReady()
+      if (this.now() >= deadline) throw new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT')
+      entry = this.startDownload(request, element)
+    } catch (error) {
+      this.releaseDownload()
+      throw error
+    }
+    try {
+      return await this.waitFor(entry, deadline)
     } catch (error) {
       if (!entry.settled) {
         // The native task cannot be cancelled reliably; keep its slot and
@@ -739,6 +774,45 @@ class ImageBridge {
         this.log('warn', error.code || 'IMAGE_UNSETTLED')
       }
       throw error
+    }
+  }
+
+  acquireDownload(deadline) {
+    if (this.now() >= deadline) return Promise.reject(new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT'))
+    if (this.activeDownloads < this.maxDownloads) {
+      this.activeDownloads += 1
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, deadline, timer: null }
+      waiter.timer = setTimeout(() => {
+        const index = this.downloadQueue.indexOf(waiter)
+        if (index !== -1) this.downloadQueue.splice(index, 1)
+        reject(new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT'))
+      }, deadline - this.now())
+      this.downloadQueue.push(waiter)
+    })
+  }
+
+  releaseDownload() {
+    if (this.activeDownloads > 0) this.activeDownloads -= 1
+    while (this.activeDownloads < this.maxDownloads && this.downloadQueue.length) {
+      const waiter = this.downloadQueue.shift()
+      clearTimeout(waiter.timer)
+      if (this.now() >= waiter.deadline) {
+        waiter.reject(new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT'))
+      } else {
+        // Reserve the slot before resuming the next request.
+        this.activeDownloads += 1
+        waiter.resolve()
+      }
+    }
+  }
+
+  rejectQueuedDownloads(error) {
+    for (const waiter of this.downloadQueue.splice(0)) {
+      clearTimeout(waiter.timer)
+      waiter.reject(error)
     }
   }
 
@@ -791,6 +865,7 @@ class ImageBridge {
       elementId: element.elementId,
       filePath,
       expectedMd5: request.expectedMd5,
+      picture: element.picElement,
       settled: false,
       bytes: null,
       error: null,
@@ -829,15 +904,7 @@ class ImageBridge {
   handleDownloadComplete(data) {
     const msgId = data ? String(data.msgId) : ''
     const elementId = data ? String(data.msgElementId) : ''
-    let entry = this.entries.get(msgId + '\u0000' + elementId)
-    if (!entry && msgId) {
-      for (const candidate of this.entries.values()) {
-        if (candidate.msgId === msgId) {
-          entry = candidate
-          break
-        }
-      }
-    }
+    const entry = this.entries.get(msgId + '\u0000' + elementId)
     if (!entry || entry.settled) return
     this.entries.delete(entry.key)
     this.finishEntryFromEvent(entry, data)
@@ -873,11 +940,51 @@ class ImageBridge {
       this.finishEntry(entry, new BridgeError(502, 'QQ_DOWNLOAD_FAILED'), null)
       return
     }
-    if (bytes.length !== info.size || digest(bytes) !== entry.expectedMd5) {
+    if (
+      bytes.length !== info.size ||
+      (digest(bytes) !== entry.expectedMd5 && !this.verifyNativeVariant(entry, data, candidate, bytes))
+    ) {
       this.finishEntry(entry, new BridgeError(502, 'IMAGE_INTEGRITY_FAILED'), null)
       return
     }
     this.finishEntry(entry, null, bytes)
+  }
+
+  verifyNativeVariant(entry, data, candidate, bytes) {
+    const picture = entry.picture || {}
+    // QQ can materialize a full-size image whose bytes differ from the message
+    // MD5. Accept only the exact native source of this non-original attachment;
+    // thumbnails, arbitrary cache paths and incomplete decodes remain failures.
+    if (
+      picture.original !== false ||
+      normalizeMd5(picture.md5HexStr) !== entry.expectedMd5 ||
+      String(data.msgId) !== entry.msgId ||
+      String(data.msgElementId) !== entry.elementId ||
+      String(data.fileDownType) !== '1' ||
+      String(data.thumbSize) !== '0' ||
+      String(data.fileErrCode) !== '0' ||
+      String(data.fileSrvErrCode) !== '0' ||
+      path.basename(path.dirname(candidate)) !== 'Ori' ||
+      path.parse(candidate).name.toLowerCase() !== entry.expectedMd5
+    )
+      return false
+    const { picWidth: width, picHeight: height } = picture
+    if (
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      width * height > MAX_IMAGE_PIXELS
+    )
+      return false
+    try {
+      const account = this.accountInfo().dataDir
+      if (!account || !within(account, candidate) || fs.realpathSync(picture.sourcePath) !== candidate) return false
+      const decoded = this.decodeImage(bytes)
+      return !!decoded && decoded.width === width && decoded.height === height
+    } catch {
+      return false
+    }
   }
 
   completionPath(entry, reported) {
@@ -900,9 +1007,10 @@ class ImageBridge {
     entry.settled = true
     entry.error = error
     entry.bytes = bytes
-    if (this.activeDownloads > 0) this.activeDownloads -= 1
+    if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key)
     this.removeEntryFiles(entry)
     entry.resolve()
+    this.releaseDownload()
   }
 
   removeEntryFiles(entry) {
@@ -916,20 +1024,23 @@ class ImageBridge {
     }
   }
 
-  waitFor(entry) {
+  waitFor(entry, deadline) {
     if (entry.settled) {
       return entry.error ? Promise.reject(entry.error) : Promise.resolve(entry.bytes)
     }
+    return this.beforeDeadline(entry.promise, deadline).then(() => {
+      if (entry.error) throw entry.error
+      return entry.bytes
+    })
+  }
+
+  beforeDeadline(promise, deadline) {
+    const remaining = deadline - this.now()
     let timer
     const timeout = new Promise((_resolve, reject) => {
-      timer = setTimeout(() => reject(new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT')), this.downloadTimeoutMs)
+      timer = setTimeout(() => reject(new BridgeError(504, 'QQ_DOWNLOAD_TIMEOUT')), Math.max(0, remaining))
     })
-    return Promise.race([entry.promise, timeout])
-      .then(
-        () => (entry.error ? Promise.reject(entry.error) : entry.bytes),
-        (error) => Promise.reject(error)
-      )
-      .finally(() => clearTimeout(timer))
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
   }
 }
 

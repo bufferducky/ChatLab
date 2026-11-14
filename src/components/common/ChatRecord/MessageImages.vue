@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
-import { useIntersectionObserver } from '@vueuse/core'
+import { useIntersectionObserver, useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { fetchWithAuth, getBaseUrl } from '@/services/utils/http'
+import { asImageFailure, withImageRetry, type ImageFailure } from '@/services/message-images/retry'
 
 const props = withDefaults(defineProps<{ sessionId: string; messageId: number; showUnavailable?: boolean }>(), {
   showUnavailable: true,
 })
 const emit = defineEmits<{ caption: [value: string | null] }>()
 const { t, te } = useI18n()
+const now = useNow({ interval: 1000 })
 const target = ref<HTMLElement | null>(null)
 const images = ref<Array<{ index: number; url: string; failure: ImageFailure | null }>>([])
 const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -42,14 +44,10 @@ const KNOWN_CODES = new Set([
   'QQ_OFFLINE',
   'QQ_BRIDGE_INCOMPATIBLE',
   'QQ_DOWNLOAD_TIMEOUT',
+  'IMAGE_RATE_LIMITED',
+  'IMAGE_TIMEOUT',
   'IMAGE_SOURCE_UNAVAILABLE',
 ])
-
-interface ImageFailure {
-  code: string
-  message: string
-  retryable: boolean
-}
 
 function fallbackFailure(): ImageFailure {
   return { code: 'IMAGE_SOURCE_UNAVAILABLE', message: '', retryable: true }
@@ -65,6 +63,10 @@ async function readFailure(response: Response): Promise<ImageFailure> {
         code: KNOWN_CODES.has(error.code) ? error.code : 'IMAGE_SOURCE_UNAVAILABLE',
         message: typeof error.message === 'string' ? error.message : '',
         retryable: error.retryable !== false,
+        retryAfterSeconds:
+          typeof error.retryAfterSeconds === 'number' && error.retryAfterSeconds > 0
+            ? error.retryAfterSeconds
+            : undefined,
       }
     }
   } catch {
@@ -74,6 +76,10 @@ async function readFailure(response: Response): Promise<ImageFailure> {
 }
 
 function failureText(value: ImageFailure | null) {
+  if (value?.retryAt)
+    return t('records.images.retryIn', {
+      seconds: Math.max(0, Math.ceil((value.retryAt - now.value.getTime()) / 1000)),
+    })
   const code = value?.code ?? 'IMAGE_SOURCE_UNAVAILABLE'
   const key = `records.images.errors.${code}`
   return te(key) ? t(key) : t('records.images.errors.IMAGE_SOURCE_UNAVAILABLE')
@@ -93,37 +99,50 @@ async function imageUrl(index: number, size: 'preview' | 'original', signal: Abo
   return url
 }
 
-function asFailure(error: unknown): ImageFailure {
-  return error && typeof error === 'object' && 'code' in error && 'retryable' in error
-    ? (error as ImageFailure)
-    : fallbackFailure()
-}
-
 async function load() {
-  if (state.value === 'loading' || state.value === 'ready') return
+  if (state.value === 'loading') return
+  if (state.value === 'ready' && images.value.every((image) => image.url || image.failure)) return
   const signal = controller.signal
   state.value = 'loading'
   failure.value = null
   try {
-    const response = await fetchWithAuth(endpoint(), { signal })
-    if (!response.ok) throw await readFailure(response)
-    const manifest: { images: Array<{ index: number }>; caption: string } = await response.json()
-    if (signal.aborted) return
-    images.value = manifest.images.map(({ index }) => ({ index, url: '', failure: null }))
-    emit('caption', images.value.length ? manifest.caption : null)
+    if (!images.value.length) {
+      const manifest = await withImageRetry(
+        async () => {
+          const response = await fetchWithAuth(endpoint(), { signal })
+          if (!response.ok) throw await readFailure(response)
+          return (await response.json()) as { images: Array<{ index: number }>; caption: string }
+        },
+        signal,
+        (value) => {
+          failure.value = value
+        }
+      )
+      if (signal.aborted) return
+      images.value = manifest.images.map(({ index }) => ({ index, url: '', failure: null }))
+      emit('caption', images.value.length ? manifest.caption : null)
+    }
     state.value = 'ready'
     await Promise.all(
-      images.value.map(async (image) => {
-        try {
-          image.url = await imageUrl(image.index, 'preview', signal)
-        } catch (error) {
-          if (!signal.aborted) image.failure = asFailure(error)
-        }
-      })
+      images.value
+        .filter((image) => !image.url)
+        .map(async (image) => {
+          try {
+            image.url = await withImageRetry(
+              () => imageUrl(image.index, 'preview', signal),
+              signal,
+              (value) => {
+                image.failure = value
+              }
+            )
+          } catch (error) {
+            if (!signal.aborted) image.failure = asImageFailure(error)
+          }
+        })
     )
   } catch (error) {
     if (!signal.aborted) {
-      failure.value = asFailure(error)
+      failure.value = asImageFailure(error)
       state.value = 'error'
     }
   }
@@ -134,19 +153,29 @@ async function openOriginal(index: number) {
   originalController = new AbortController()
   const signal = originalController.signal
   selected.value = index
+  if (originalUrl.value) {
+    URL.revokeObjectURL(originalUrl.value)
+    urls.delete(originalUrl.value)
+  }
   originalUrl.value = ''
   originalFailure.value = null
   originalState.value = 'loading'
   modalOpen.value = true
   try {
-    const url = await imageUrl(index, 'original', signal)
+    const url = await withImageRetry(
+      () => imageUrl(index, 'original', signal),
+      signal,
+      (value) => {
+        originalFailure.value = value
+      }
+    )
     if (!signal.aborted) {
       originalUrl.value = url
       originalState.value = 'ready'
     }
   } catch (error) {
     if (!signal.aborted) {
-      originalFailure.value = asFailure(error)
+      originalFailure.value = asImageFailure(error)
       originalState.value = 'error'
     }
   }
@@ -162,7 +191,10 @@ function releaseImages() {
 }
 
 function retry() {
+  controller.abort()
+  controller = new AbortController()
   releaseImages()
+  images.value = []
   state.value = 'idle'
   failure.value = null
   void load()
@@ -186,7 +218,14 @@ useIntersectionObserver(
   target,
   ([entry]) => {
     visible = entry.isIntersecting
-    if (visible && state.value === 'idle') void load()
+    if (visible) {
+      if (controller.signal.aborted) controller = new AbortController()
+      if (state.value === 'idle' || images.value.some((image) => !image.url && !image.failure)) void load()
+    } else {
+      controller.abort()
+      if (state.value === 'loading') state.value = 'idle'
+      for (const image of images.value) if (image.failure?.retryAt) image.failure = null
+    }
   },
   { rootMargin: '100px' }
 )
@@ -219,7 +258,7 @@ onBeforeUnmount(clear)
       class="flex h-32 w-48 max-w-full items-center justify-center rounded-lg bg-gray-200/50 text-xs text-gray-500 dark:bg-gray-700/40 dark:text-gray-400"
       role="status"
     >
-      {{ t('records.images.loading') }}
+      {{ failure?.retryAt ? failureText(failure) : t('records.images.loading') }}
     </div>
     <div
       v-else-if="showUnavailable && (state === 'error' || (state === 'ready' && !images.length))"
@@ -252,7 +291,7 @@ onBeforeUnmount(clear)
         >
           <span>{{ failureText(image.failure) }}</span>
           <button
-            v-if="image.failure.retryable"
+            v-if="image.failure.retryable && !image.failure.retryAt"
             type="button"
             class="rounded text-primary-600 hover:underline focus-visible:outline-2 dark:text-primary-400"
             @click="retry"
@@ -278,7 +317,7 @@ onBeforeUnmount(clear)
           class="mx-auto max-h-[70vh] max-w-full object-contain"
         />
         <p v-if="originalState === 'loading'" class="mt-3 text-center text-xs text-gray-500" role="status">
-          {{ t('records.images.loadingOriginal') }}
+          {{ originalFailure?.retryAt ? failureText(originalFailure) : t('records.images.loadingOriginal') }}
         </p>
         <div v-if="originalState === 'error'" class="mt-3 flex justify-center gap-3 text-xs text-gray-500">
           <span>
