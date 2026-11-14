@@ -10,7 +10,7 @@ QQ 原生数据库中的消息 ID、引用序号和导入库 ID 语义不同，�
 
 ## 解密与解析
 
-读取器依赖 [qq-local-interface](https://github.com/nyamou/qq-local-interface)。密钥由本人在自己的设备完成授权和本机保存；生产流程不输出密钥，不将解密数据库写入源码目录。
+读取器依赖 [qq-local-interface](https://github.com/Ethan-Wang-dev/qq-local-interface)。密钥由本人在自己的设备完成授权和本机保存；生产流程不输出密钥，不将解密数据库写入源码目录。
 
 本地验证发现部分数据库页依赖预分配零页兼容处理，读取器当前本机修复不等同于其公开版本已经支持。接入前需要逐项验证解密认证、SQLite 完整性和消息解析，不能仅以“文件成功复制”判断数据可用。
 
