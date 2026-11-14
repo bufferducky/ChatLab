@@ -107,6 +107,10 @@ export interface CreateChatTopicsRequest {
   startDay?: string
 }
 
+export interface ChatTopicGlobalAutomationSettings {
+  enabled: boolean
+}
+
 export interface ChatTopicAutomationSettings {
   enabled: boolean
   startTime: string
@@ -130,6 +134,7 @@ export interface ChatTopicFeedItem extends ChatTopic {
 }
 
 export interface ChatTopicFeed {
+  automationEnabled: boolean
   settings: ChatTopicAutomationSettings
   withinSchedule: boolean
   modelConfigured: boolean

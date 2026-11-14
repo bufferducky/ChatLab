@@ -285,6 +285,7 @@ export type ChartAutoMode = 'explicit' | 'suggest' | 'aggressive'
 export type {
   ChatTopic,
   ChatTopicAutomationSettings,
+  ChatTopicGlobalAutomationSettings,
   ChatTopicUpdate,
   ChatTopicFeedItem,
   ChatTopicFeed,

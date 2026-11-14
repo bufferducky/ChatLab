@@ -175,7 +175,8 @@
       "disabled": "自动总结已关闭",
       "sleeping": "自动总结已暂停，时段内继续",
       "waiting": "等待整理新消息",
-      "caughtUp": "已整理完待处理消息"
+      "caughtUp": "已整理完待处理消息",
+      "globallyDisabled": "自动总结总开关已关闭，可在设置 → 自动化中开启"
     }
   },
   "messageItem": {

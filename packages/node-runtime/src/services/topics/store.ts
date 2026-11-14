@@ -143,6 +143,16 @@ export class ChatTopicStore {
     this.db.close()
   }
 
+  isAutomationEnabled(): boolean {
+    return this.db.prepare("SELECT value FROM topic_meta WHERE key = 'automation_enabled'").get()?.value !== 'false'
+  }
+
+  setAutomationEnabled(enabled: boolean): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO topic_meta (key, value) VALUES ('automation_enabled', ?)")
+      .run(String(enabled))
+  }
+
   ensureLiveSession(sessionId: string, now: number): LiveTopicSession {
     this.db
       .prepare(

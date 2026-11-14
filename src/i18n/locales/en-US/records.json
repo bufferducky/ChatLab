@@ -175,7 +175,8 @@
       "disabled": "Automatic summaries are off",
       "sleeping": "Automatic summaries paused until scheduled hours",
       "waiting": "Waiting to process new messages",
-      "caughtUp": "All pending messages processed"
+      "caughtUp": "All pending messages processed",
+      "globallyDisabled": "Automatic summaries are off globally. Enable them in Settings → Automation."
     }
   },
   "messageItem": {

@@ -46,8 +46,9 @@ const unreadCount = computed(
   () => (feed.value?.topics ?? []).filter((topic) => topic.version > topic.readVersion).length
 )
 const status = computed(() => {
-  if (!feed.value?.modelConfigured) return 'noModel'
   if (active.value) return 'processing'
+  if (feed.value && !feed.value.automationEnabled) return 'globallyDisabled'
+  if (!feed.value?.modelConfigured) return 'noModel'
   if (!feed.value?.settings.enabled) return 'disabled'
   if (!feed.value.withinSchedule) return 'sleeping'
   return feed.value.pendingMessages ? 'waiting' : 'caughtUp'

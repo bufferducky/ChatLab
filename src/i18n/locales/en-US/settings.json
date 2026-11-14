@@ -621,6 +621,14 @@
       "desc": "After enabling the service, external tools can query data or push chat records to ChatLab via API. All requests require Bearer Token authentication.",
       "authHint": "Header example:",
       "docLink": "View full API documentation"
+    },
+    "topicAutomation": {
+      "title": "Automatic topics",
+      "enable": "Automatic summaries for all conversations",
+      "description": "Control automatic summaries across all conversations. Changes apply immediately and persist after restarting. Each conversation still uses its own switch and schedule.",
+      "enabled": "On: process pending messages from the last 7 days during each conversation’s schedule.",
+      "disabled": "Off: automatic summaries stop. Message sync, existing topics and manual summaries remain available.",
+      "failed": "Could not load or save automatic summary settings"
     }
   },
   "mcp": {

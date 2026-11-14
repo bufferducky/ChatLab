@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { PathProvider } from '@openchatlab/core'
 import type {
   ChatTopicAutomationSettings,
+  ChatTopicGlobalAutomationSettings,
   ChatTopicFeed,
   ChatTopicDay,
   ChatTopicPreflight,
@@ -58,6 +59,8 @@ export interface ChatTopicServiceDeps {
 }
 
 export interface ChatTopicService {
+  getGlobalAutomation(): ChatTopicGlobalAutomationSettings
+  setGlobalAutomation(settings: ChatTopicGlobalAutomationSettings): ChatTopicGlobalAutomationSettings
   trackSession(sessionId: string): void
   noteSync(sessionId: string): void
   tickAutomation(): void
@@ -120,6 +123,26 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   const unsubscribeSessionDelete = chatTopicWorkCoordinator.subscribeSessionDelete(prepareSessionDelete)
   const executionWaiters: Array<{ runId: string; resolve: () => void }> = []
 
+  function getGlobalAutomation(): ChatTopicGlobalAutomationSettings {
+    assertOpen()
+    return { enabled: store.isAutomationEnabled() }
+  }
+
+  function setGlobalAutomation(settings: ChatTopicGlobalAutomationSettings): ChatTopicGlobalAutomationSettings {
+    assertOpen()
+    if (!settings || typeof settings.enabled !== 'boolean') {
+      throw Object.assign(new Error('Invalid global topic automation settings'), { statusCode: 400 })
+    }
+    store.setAutomationEnabled(settings.enabled)
+    appLogger.info('chat-topics', 'global topic automation changed', { enabled: settings.enabled })
+    tickAutomation()
+    return getGlobalAutomation()
+  }
+
+  function canAutomate(settings: ChatTopicAutomationSettings): boolean {
+    return store.isAutomationEnabled() && isTopicAutomationTime(settings, now())
+  }
+
   function noteSync(sessionId: string): void {
     assertOpen()
     store.noteLiveSync(sessionId, now())
@@ -137,6 +160,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     const state = store.ensureLiveSession(sessionId, now())
     const settings = state.settings
     return {
+      automationEnabled: store.isAutomationEnabled(),
       settings,
       withinSchedule: isTopicAutomationTime(settings, now()),
       modelConfigured: Boolean(deps.getModelClient()),
@@ -188,7 +212,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   }
 
   function tickAutomation(): void {
-    if (closed || !deps.getModelClient()) return
+    if (closed) return
     store.recoverInterruptedRuns(now())
     let active = store.getActiveRun()
     if (
@@ -198,7 +222,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       !activeExecution
     ) {
       const settings = store.getLiveSession(active.sessionId)?.settings
-      if (!settings || !isTopicAutomationTime(settings, now())) {
+      if (!settings || !canAutomate(settings)) {
         cancel(active.sessionId, active.id)
         store.setLiveRunAutomatic(active.id, true)
         active = null
@@ -207,13 +231,13 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     if (active) {
       if (active.rangeKind !== 'updates' || !store.isLiveRunAutomatic(active.id)) return
       const state = store.getLiveSession(active.sessionId)
-      if (!state || !isTopicAutomationTime(state.settings, now())) {
+      if (!state || !canAutomate(state.settings)) {
         if (activeExecution?.runId === active.id) {
-          activeExecution.requestedStatus = 'paused'
+          activeExecution.requestedStatus = store.isAutomationEnabled() ? 'paused' : 'cancelled'
           activeExecution.controller.abort()
         } else if (preemptedRunId === active.id) {
           preemptedRunId = null
-          updateRun(active, { status: 'paused' })
+          updateRun(active, { status: store.isAutomationEnabled() ? 'paused' : 'cancelled' })
         }
         return
       }
@@ -223,9 +247,10 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       }
       return
     }
+    if (!store.isAutomationEnabled() || !deps.getModelClient()) return
     for (const sessionId of store.listLiveSessions()) {
       const state = store.getLiveSession(sessionId)!
-      if (!isTopicAutomationTime(state.settings, now())) continue
+      if (!canAutomate(state.settings)) continue
       try {
         const latest = store.getLatestRun(sessionId)
         if (
@@ -762,9 +787,9 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (run.rangeKind === 'updates' && store.isLiveRunAutomatic(run.id)) {
         const settings = store.getLiveSession(run.sessionId)!.settings
-        if (!isTopicAutomationTime(settings, now())) {
-          if (activeExecution) activeExecution.requestedStatus = 'paused'
-          throw new Error('Automatic topic updates are outside the configured schedule')
+        if (!canAutomate(settings)) {
+          if (activeExecution) activeExecution.requestedStatus = store.isAutomationEnabled() ? 'paused' : 'cancelled'
+          throw new Error('Automatic topic updates are disabled or outside the configured schedule')
         }
       }
       const attemptPrompts =
@@ -988,6 +1013,8 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   }
 
   return {
+    getGlobalAutomation,
+    setGlobalAutomation,
     trackSession,
     noteSync,
     tickAutomation,

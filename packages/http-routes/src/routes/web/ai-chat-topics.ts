@@ -6,7 +6,11 @@ import {
   appLogger,
   type ChatTopicService,
 } from '@openchatlab/node-runtime'
-import type { ChatTopicAutomationSettings, CreateChatTopicsRequest } from '@openchatlab/shared-types'
+import type {
+  ChatTopicAutomationSettings,
+  ChatTopicGlobalAutomationSettings,
+  CreateChatTopicsRequest,
+} from '@openchatlab/shared-types'
 import type { AutomationRouteHostContext } from '../../context/automation'
 import type { AiRouteContext } from '../../context/ai'
 import type { RuntimeRouteContext } from '../../context/runtime'
@@ -63,6 +67,11 @@ export function registerAiChatTopicRoutes(server: FastifyInstance, ctx: ChatTopi
     unsubscribe?.()
     service?.close()
   })
+
+  server.get('/_web/topics/automation', async () => getService().getGlobalAutomation())
+  server.put<{ Body: ChatTopicGlobalAutomationSettings }>('/_web/topics/automation', async (request) =>
+    getService().setGlobalAutomation(request.body)
+  )
 
   server.get<{ Params: { id: string } }>('/_web/sessions/:id/topics/feed', async (request) =>
     getService().getFeed(request.params.id)

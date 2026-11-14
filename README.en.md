@@ -16,6 +16,8 @@ This is an independently maintained personal project based on [ChatLab](https://
 
 AI features require your own model configuration. Messages remain locally stored; using an external model sends the relevant content to your selected provider.
 
+The **global automatic summary switch** is under Settings → Automation → Auto Sync → Automatic topics. It defaults to on, saves immediately and persists after restarting. Turning it off stops automatic summaries for every conversation and aborts an active automatic request. Collection, message sync, existing topics, manual “Update now” and batch summaries remain available. Conversation switches, schedules and committed checkpoints are preserved; re-enabling resumes incremental processing under each conversation’s settings. Requests already sent to a model may still incur usage.
+
 Automatic topics and “Update now” both use a rolling 7-day window, including newly imported messages within that window. Older original messages and existing topics remain available. Upstream model failures preserve progress for retry. Group/private filters select the pull scope; QQ collection still runs for the whole source. See [topic organization](packages/node-runtime/src/services/topics/README.md) and the [Pull protocol](docs/en/standard/chatlab-pull.md).
 
 ## Install and connect

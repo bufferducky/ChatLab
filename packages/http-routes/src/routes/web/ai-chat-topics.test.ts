@@ -47,6 +47,24 @@ test('chat topic routes expose persisted run state and reject generation without
   })
   await app.ready()
 
+  const globalUrl = '/_web/topics/automation'
+  const global = await app.inject({ method: 'GET', url: globalUrl })
+  assert.equal(global.statusCode, 200)
+  assert.deepEqual(global.json(), { enabled: true })
+  const disabled = await app.inject({ method: 'PUT', url: globalUrl, payload: { enabled: false } })
+  assert.equal(disabled.statusCode, 200)
+  assert.deepEqual(disabled.json(), { enabled: false })
+  for (const payload of [{ enabled: 'false' }, {}, null]) {
+    const invalidGlobal = await app.inject({
+      method: 'PUT',
+      url: globalUrl,
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify(payload),
+    })
+    assert.equal(invalidGlobal.statusCode, 400)
+    assert.deepEqual((await app.inject({ method: 'GET', url: globalUrl })).json(), { enabled: false })
+  }
+
   const latest = await app.inject({ method: 'GET', url: '/_web/sessions/group/topics/runs/latest' })
   assert.equal(latest.statusCode, 200)
   assert.equal(latest.body, 'null')
@@ -88,6 +106,7 @@ test('chat topic routes expose persisted run state and reject generation without
   assert.equal(feed.json().settings.startTime, '09:30')
   assert.equal(feed.json().settings.endTime, '23:40')
   assert.equal(feed.json().modelConfigured, false)
+  assert.equal(feed.json().automationEnabled, false)
 
   const changed = { ...feed.json().settings, enabled: false, startTime: '10:00', endTime: '22:00' }
   const save = await app.inject({ method: 'PUT', url: '/_web/sessions/group/topics/automation', payload: changed })

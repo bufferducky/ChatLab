@@ -8,6 +8,7 @@ import { useLayoutStore } from '@/stores/layout'
 import DataSourceAddModal from './API/DataSourceAddModal.vue'
 import DataSourceEditModal from './API/DataSourceEditModal.vue'
 import McpSettingsTab from './McpSettingsTab.vue'
+import TopicAutomationSection from './AI/TopicAutomationSection.vue'
 
 const { t, locale } = useI18n()
 const store = useApiServerStore()
@@ -255,6 +256,7 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
       <div class="space-y-6 px-6 pt-4 pb-6">
         <!-- ==================== Auto Sync Sub-Tab ==================== -->
         <template v-if="activeSubTab === 'sync'">
+          <TopicAutomationSection />
           <div>
             <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
               <UIcon name="i-heroicons-cloud-arrow-down" class="h-4 w-4 text-indigo-500" />

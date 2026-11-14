@@ -1,8 +1,23 @@
 import { fetchWithAuth } from '../utils/http'
 import type { ChatTopicDay, ChatTopicPreflight, ChatTopicRun, ChatTopicsAdapter } from './types'
-import type { ChatTopicAutomationSettings, ChatTopicFeed } from '@openchatlab/shared-types'
+import type {
+  ChatTopicAutomationSettings,
+  ChatTopicGlobalAutomationSettings,
+  ChatTopicFeed,
+} from '@openchatlab/shared-types'
 
 export class FetchChatTopicsAdapter implements ChatTopicsAdapter {
+  getGlobalAutomation() {
+    return requestJson<ChatTopicGlobalAutomationSettings>('/_web/topics/automation')
+  }
+
+  setGlobalAutomation(settings: ChatTopicGlobalAutomationSettings) {
+    return requestJson<ChatTopicGlobalAutomationSettings>('/_web/topics/automation', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    })
+  }
+
   getFeed(sessionId: string) {
     return requestJson<ChatTopicFeed>(`/_web/sessions/${encodeURIComponent(sessionId)}/topics/feed`)
   }

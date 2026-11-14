@@ -5,10 +5,13 @@ import type {
   ChatTopicRangeKind,
   CreateChatTopicsRequest,
   ChatTopicAutomationSettings,
+  ChatTopicGlobalAutomationSettings,
   ChatTopicFeed,
 } from '@openchatlab/shared-types'
 
 export interface ChatTopicsAdapter {
+  getGlobalAutomation(): Promise<ChatTopicGlobalAutomationSettings>
+  setGlobalAutomation(settings: ChatTopicGlobalAutomationSettings): Promise<ChatTopicGlobalAutomationSettings>
   getFeed(sessionId: string): Promise<ChatTopicFeed>
   setAutomation(sessionId: string, settings: ChatTopicAutomationSettings): Promise<ChatTopicFeed>
   updateFeed(sessionId: string): Promise<ChatTopicRun | null>
