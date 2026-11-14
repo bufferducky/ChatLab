@@ -24,7 +24,7 @@ test('a complete release verifies its source, updater payloads and redownloaded 
     names.map((name) => `  - url: ${name}\n    sha512: ${digest(data)}\n    size: ${data.length}\n`).join('')
   fs.writeFileSync(path.join(directory, 'latest-mac.yml'), manifest([zip, dmg]))
   // NSIS with differentialPackage=false intentionally omits file size.
-  fs.writeFileSync(path.join(directory, 'latest.yml'), manifest([exe]).replace(/^    size:.*\n/gm, ''))
+  fs.writeFileSync(path.join(directory, 'latest.yml'), manifest([exe]).replace(/^ {4}size:.*\n/gm, ''))
   fs.writeFileSync(
     path.join(directory, 'BUILD_INFO.json'),
     JSON.stringify({ version, commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() })
