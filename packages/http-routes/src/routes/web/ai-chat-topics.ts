@@ -81,7 +81,7 @@ export function registerAiChatTopicRoutes(server: FastifyInstance, ctx: ChatTopi
     async (request) => getService().setAutomation(request.params.id, request.body)
   )
   server.post<{ Params: { id: string } }>('/_web/sessions/:id/topics/feed/update', async (request, reply) => {
-    const run = getService().updateFeed(request.params.id)
+    const run = await getService().updateFeed(request.params.id)
     return reply.code(run ? 202 : 200).send(run)
   })
   server.post<{ Params: { id: string }; Body: { topics: Array<{ id: string; version: number }> } }>(

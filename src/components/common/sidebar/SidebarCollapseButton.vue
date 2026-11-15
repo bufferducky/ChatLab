@@ -19,12 +19,14 @@ const emit = defineEmits<{
     :aria-label="accessibleLabel"
     :aria-expanded="true"
     :title="accessibleLabel"
-    class="group flex h-9 w-9 cursor-pointer items-center justify-center rounded-full hover:bg-gray-200/60 dark:hover:bg-white/[0.06]"
+    class="group flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg hover:bg-gray-200/60 dark:hover:bg-white/[0.06]"
     style="-webkit-app-region: no-drag"
     @click="emit('click', $event)"
   >
     <template #leading>
-      <UIcon name="i-lucide-panel-right" class="size-4 scale-x-[-1] group-hover:hidden" />
+      <span class="group-hover:hidden">
+        <slot><UIcon name="i-lucide-panel-right" class="size-4 scale-x-[-1]" /></slot>
+      </span>
       <UIcon name="i-lucide-panel-right-close" class="size-4 hidden scale-x-[-1] group-hover:block" />
     </template>
   </UButton>
@@ -37,7 +39,7 @@ const emit = defineEmits<{
     :aria-label="accessibleLabel"
     :aria-expanded="false"
     :title="accessibleLabel"
-    class="group relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-full hover:bg-gray-200/60 dark:hover:bg-white/[0.06]"
+    class="group relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg hover:bg-gray-200/60 dark:hover:bg-white/[0.06]"
     style="-webkit-app-region: no-drag"
     @click="emit('click', $event)"
   >

@@ -72,6 +72,14 @@ test('opted-in sources discover paginated groups and private chats, including on
   await engine.triggerPull(source.id)
   assert.equal(manager.get(source.id)?.sessions.length, 3)
   assert.ok(imported.includes('new'))
+  const removed = manager.get(source.id)!.sessions.find((session) => session.remoteSessionId === 'new')!
+  manager.update(source.id, { excludedRemoteSessionIds: ['new'] })
+  manager.removeSession(source.id, removed.id)
+  imported.length = 0
+  await engine.triggerPull(source.id)
+  assert.ok(!imported.includes('new'))
+  assert.equal(manager.get(source.id)?.sessions.length, 2)
+  assert.deepEqual(new DataSourceManager(root).get(source.id)?.excludedRemoteSessionIds, ['new'])
   const before = manager.get(source.id)
   fail = true
   await assert.rejects(engine.pullAllSessions(before!), /503/)

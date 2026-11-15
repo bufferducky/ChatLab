@@ -10,6 +10,7 @@ import type { DatabaseAdapter } from '../interfaces'
 import { buildTimeFilter, hasTable, hasColumn } from './filters'
 import {
   FULL_MSG_SELECT,
+  SYSTEM_MSG_FILTER,
   mapMessageRow,
   buildMsgConditions,
   buildExcludeKeywordsConditions,
@@ -70,7 +71,7 @@ export function queryMessages(db: DatabaseAdapter, options?: QueryMessagesOption
   const offset = options?.offset ?? 0
   const page = Math.floor(offset / limit) + 1
 
-  const conditions: string[] = ["COALESCE(m.account_name, '') != '系统消息'"]
+  const conditions: string[] = [SYSTEM_MSG_FILTER]
   const params: unknown[] = []
 
   if (options?.keyword) {
@@ -164,7 +165,7 @@ export function searchMessagesLike(
       `SELECT COUNT(*) as total
        FROM message msg
        JOIN member m ON msg.sender_id = m.id
-       WHERE msg.content LIKE ? AND COALESCE(m.account_name, '') != '系统消息'`
+       WHERE msg.content LIKE ? AND ${SYSTEM_MSG_FILTER}`
     )
     .get(`%${keyword}%`) as { total: number }
 
@@ -180,7 +181,7 @@ export function searchMessagesLike(
         msg.type as type
       FROM message msg
       JOIN member m ON msg.sender_id = m.id
-      WHERE msg.content LIKE ? AND COALESCE(m.account_name, '') != '系统消息'
+      WHERE msg.content LIKE ? AND ${SYSTEM_MSG_FILTER}
       ORDER BY msg.ts DESC
       LIMIT ? OFFSET ?`
     )
@@ -601,7 +602,9 @@ function hydrateMessagesByIds(db: DatabaseAdapter, ids: number[]): MappedMessage
   if (ids.length === 0) return []
   const placeholders = ids.map(() => '?').join(', ')
   const rows = db
-    .prepare(`${FULL_MSG_SELECT} WHERE msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`)
+    .prepare(
+      `${FULL_MSG_SELECT} WHERE ${SYSTEM_MSG_FILTER} AND msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`
+    )
     .all(...ids) as unknown as FullMessageRow[]
   return rows.map(mapMessageRow)
 }
@@ -624,8 +627,8 @@ export function getMessageContext(
 
     const beforeRows = db
       .prepare(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts DESC, msg.id DESC LIMIT ?`
       )
       .all(messageId, contextSize) as { id: number }[]
@@ -633,8 +636,8 @@ export function getMessageContext(
 
     const afterRows = db
       .prepare(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts ASC, msg.id ASC LIMIT ?`
       )
       .all(messageId, contextSize) as { id: number }[]
@@ -680,7 +683,8 @@ export function getSearchMessageContext(
             .prepare(
               `SELECT msg.id FROM message_context mc
                JOIN message msg ON msg.id = mc.message_id
-               WHERE mc.segment_id = ? ORDER BY msg.ts ASC, msg.id ASC`
+               JOIN member m ON msg.sender_id = m.id
+               WHERE ${SYSTEM_MSG_FILTER} AND mc.segment_id = ? ORDER BY msg.ts ASC, msg.id ASC`
             )
             .all(sessionRow.segment_id) as { id: number }[]
           const ids = rows.map((row) => row.id)
@@ -703,8 +707,8 @@ export function getSearchMessageContext(
     if (contextBefore > 0) {
       const rows = db
         .prepare(
-          `SELECT msg.id FROM message msg
-           WHERE (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
+          `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+           WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
            ORDER BY msg.ts DESC, msg.id DESC LIMIT ?`
         )
         .all(messageId, contextBefore) as { id: number }[]
@@ -713,8 +717,8 @@ export function getSearchMessageContext(
     if (contextAfter > 0) {
       const rows = db
         .prepare(
-          `SELECT msg.id FROM message msg
-           WHERE (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
+          `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+           WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
            ORDER BY msg.ts ASC, msg.id ASC LIMIT ?`
         )
         .all(messageId, contextAfter) as { id: number }[]

@@ -23,7 +23,7 @@ export const useLayoutStore = defineStore(
     // Keep the existing persisted preference when replacing the drawer shell.
     const chatRecordDrawerWidth = ref(750)
     const contactPanelWidth = ref(420)
-    const topicsPanelWidth = ref(320)
+    const topicsPanelWidth = ref(308)
     const canOpenSidePanel = computed(() => Boolean(sidePanelView.value || sidePanelSessionId.value))
     const canReturnSidePanel = computed(
       () => sidePanelView.value === 'records' && (sidePanelHasContact.value || sidePanelDefaultView.value === 'topics')
@@ -73,7 +73,7 @@ export const useLayoutStore = defineStore(
 
     function setSidePanelContext(sessionId: string | null, defaultView: 'records' | 'topics' = 'records') {
       const showTopics = Boolean(sessionId) && defaultView === 'topics'
-      sidePanelOpen.value = showTopics
+      sidePanelOpen.value = false
       sidePanelView.value = showTopics ? 'topics' : null
       sidePanelDefaultView.value = defaultView
       sidePanelHasContact.value = false

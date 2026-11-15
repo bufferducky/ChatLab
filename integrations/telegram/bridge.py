@@ -12,6 +12,7 @@ import hmac
 import json
 import math
 import os
+import secrets
 import signal
 import sqlite3
 import tempfile
@@ -88,6 +89,48 @@ def collector_lock(root):
         except BlockingIOError:
             raise RuntimeError("CollectorBusy") from None
         yield
+
+
+class CollectionController:
+    """Share one collection round between the timer and manual HTTP requests."""
+
+    def __init__(self, collect):
+        self.collect = collect
+        self.lock = threading.RLock()
+        self.status = {"state": "idle", "changed": 0, "finishedAt": 0}
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.status)
+
+    def trigger(self):
+        with self.lock:
+            if self.status["state"] == "running":
+                return 200, {**self.status, "alreadyRunning": True}
+            self.status = {
+                "state": "running",
+                "collectId": secrets.token_hex(8),
+                "startedAt": int(time.time()),
+                "finishedAt": 0,
+                "changed": 0,
+            }
+            threading.Thread(target=self._run, daemon=True).start()
+            return 202, dict(self.status)
+
+    def _run(self):
+        try:
+            result = self.collect()
+            error = "TelegramRateLimited" if result.get("deferred") else ""
+            changed = result.get("changedMessages", 0)
+        except Exception as exc:  # noqa: BLE001 -- Publish only safe error categories.
+            error, changed = type(exc).__name__, 0
+        with self.lock:
+            self.status.update(
+                state="failed" if error else "done",
+                changed=changed,
+                error=error,
+                finishedAt=int(time.time()),
+            )
 
 
 def make_client(root, config):
@@ -224,6 +267,39 @@ def make_client(root, config):
     )
 
 
+def extract_message_links(message, content):
+    """Telegram offsets are UTF-16 code units, including any collector media prefix."""
+    from telethon import types
+
+    text = getattr(message, "message", None) or ""
+    encoded = text.encode("utf-16-le")
+    prefix = (len(content.encode("utf-16-le")) - len(encoded)) // 2
+    links = []
+    for entity in getattr(message, "entities", None) or []:
+        start, end = entity.offset * 2, (entity.offset + entity.length) * 2
+        if start < 0 or end > len(encoded) or end <= start:
+            continue
+        label = encoded[start:end].decode("utf-16-le")
+        if isinstance(entity, types.MessageEntityTextUrl):
+            url = entity.url
+        elif isinstance(entity, types.MessageEntityUrl):
+            url = label if "://" in label else "https://" + label
+        elif isinstance(entity, types.MessageEntityMention):
+            url = "https://t.me/" + label.lstrip("@")
+        else:
+            continue
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            continue
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+            continue
+        links.append(
+            {"offset": prefix + entity.offset, "length": entity.length, "url": url}
+        )
+    return links
+
+
 def convert_message(message, sender_name=None):
     """Keep native message/reply IDs within one peer; do not download media."""
     from telethon import types, utils
@@ -292,6 +368,10 @@ class Cache:
                     payload TEXT NOT NULL,UNIQUE(session_id,native_id));
                 CREATE INDEX IF NOT EXISTS session_seq ON messages(session_id,seq);
                 CREATE INDEX IF NOT EXISTS session_observed ON messages(session_id,observed,seq);
+                CREATE TABLE IF NOT EXISTS message_links(
+                    session_id TEXT NOT NULL,native_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,links TEXT NOT NULL,
+                    PRIMARY KEY(session_id,native_id));
                 CREATE TABLE IF NOT EXISTS image_metadata(
                     session_id TEXT NOT NULL,native_id INTEGER NOT NULL,
                     media BLOB NOT NULL,caption TEXT NOT NULL,
@@ -323,6 +403,14 @@ class Cache:
                     db.execute(
                         f"ALTER TABLE image_metadata ADD COLUMN {column} {declaration}"
                     )
+            # Queue recent videos collected by older versions without re-importing messages.
+            db.execute(
+                """INSERT OR IGNORE INTO image_metadata
+                (session_id,native_id,media,caption,preview_done)
+                SELECT session_id,native_id,X'', '',1 FROM messages
+                WHERE stamp>=? AND json_extract(payload,'$.type')=3""",
+                (int(time.time()) - 7 * 86400,),
+            )
         self.path.chmod(0o600)
 
     @contextlib.contextmanager
@@ -398,7 +486,7 @@ class Cache:
                 else row["last_id"]
             )
 
-    def ingest(self, sid, payloads, *, now=None, images=()):
+    def ingest(self, sid, payloads, *, now=None, images=(), links=()):
         """Commit rows and the Telegram ID checkpoint in the same transaction."""
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone():
@@ -439,7 +527,31 @@ class Cache:
                     DO UPDATE SET media=excluded.media,caption=excluded.caption""",
                     (sid, int(mid), media, caption),
                 )
+            for mid, content, values in links:
+                db.execute(
+                    "INSERT OR REPLACE INTO message_links VALUES(?,?,?,?)",
+                    (sid, int(mid), content, json.dumps(values)),
+                )
         return changed
+
+    def links(self, sid, mid):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT content,links FROM message_links WHERE session_id=? AND native_id=?",
+                (sid, int(mid)),
+            ).fetchone()
+            return (
+                {"content": row["content"], "links": json.loads(row["links"])}
+                if row
+                else None
+            )
+
+    def store_links(self, sid, mid, content, links):
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO message_links VALUES(?,?,?,?)",
+                (sid, int(mid), content, json.dumps(links)),
+            )
 
     def finish_session(self, sid, latest_id=0):
         with self.connect() as db:
@@ -693,6 +805,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                 cursor = cache.scan_cursor(sid)
                 batch = []
                 media_batch = []
+                link_batch = []
                 async for message in client.iter_messages(
                     dialog.entity,
                     min_id=cursor,
@@ -715,19 +828,29 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                             break
                         continue
                     sender = getattr(message, "sender", None)
-                    batch.append(
-                        convert_message(
-                            message, utils.get_display_name(sender) if sender else None
+                    converted = convert_message(
+                        message, utils.get_display_name(sender) if sender else None
+                    )
+                    batch.append(converted)
+                    content = converted["content"] or ""
+                    link_batch.append(
+                        (
+                            str(message.id),
+                            content,
+                            extract_message_links(message, content),
                         )
                     )
                     if metadata := image_metadata(message):
                         media_batch.append((str(message.id), *metadata))
                     if len(batch) >= BATCH_SIZE:
                         write_started = time.monotonic()
-                        changed += cache.ingest(sid, batch, images=media_batch)
+                        changed += cache.ingest(
+                            sid, batch, images=media_batch, links=link_batch
+                        )
                         metrics["cacheWriteSeconds"] += time.monotonic() - write_started
                         batch.clear()
                         media_batch.clear()
+                        link_batch.clear()
                         if image_service:
                             image_service.wake_prefetch()
                         if changed % 10000 == 0:
@@ -738,7 +861,9 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                         break
                 if batch:
                     write_started = time.monotonic()
-                    changed += cache.ingest(sid, batch, images=media_batch)
+                    changed += cache.ingest(
+                        sid, batch, images=media_batch, links=link_batch
+                    )
                     metrics["cacheWriteSeconds"] += time.monotonic() - write_started
                     if image_service:
                         image_service.wake_prefetch()
@@ -751,10 +876,22 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                 await client.disconnect()
 
 
-def make_server(cache, config, images=None):
+def make_server(cache, config, images=None, collection=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
+
+        def do_POST(self):
+            if not hmac.compare_digest(
+                self.headers.get("Authorization", ""), "Bearer " + config["token"]
+            ):
+                return self.reply(401, {"error": "Unauthorized"})
+            if urlsplit(self.path).path != "/api/v1/collect":
+                return self.reply(404, {"error": "Not found"})
+            if collection is None:
+                return self.reply(501, {"error": "Collect is not enabled"})
+            status, payload = collection.trigger()
+            return self.reply(status, payload)
 
         def do_DELETE(self):
             from urllib.parse import unquote
@@ -775,11 +912,20 @@ def make_server(cache, config, images=None):
         def do_GET(self):
             path = urlsplit(self.path)
             if path.path == "/health":
-                return self.reply(200, cache.status())
+                status = cache.status()
+                if collection is not None:
+                    status.update(
+                        capabilities=["collect"], refresh=collection.snapshot()
+                    )
+                return self.reply(200, status)
             if not hmac.compare_digest(
                 self.headers.get("Authorization", ""), "Bearer " + config["token"]
             ):
                 return self.reply(401, {"error": "Unauthorized"})
+            if path.path == "/api/v1/collect":
+                if collection is None:
+                    return self.reply(501, {"error": "Collect is not enabled"})
+                return self.reply(200, collection.snapshot())
             if not cache.status()["ready"]:
                 return self.reply(
                     503, {"error": "Initial collection pending; inspect /health"}
@@ -807,6 +953,23 @@ def make_server(cache, config, images=None):
                         },
                     )
                 parts = path.path.strip("/").split("/")
+                if (
+                    len(parts) == 7
+                    and parts[:3] == ["api", "v1", "sessions"]
+                    and parts[4] == "messages"
+                    and parts[6] == "links"
+                ):
+                    if images is None:
+                        return self.reply(404, {"error": "Message links unavailable"})
+                    return self.reply(
+                        200,
+                        images.request(
+                            unquote(parts[3]),
+                            unquote(parts[5]),
+                            "links",
+                            request_id=self.headers.get("X-Image-Request-Id"),
+                        ),
+                    )
                 if (
                     len(parts) in (7, 8)
                     and parts[:3] == ["api", "v1", "sessions"]
@@ -976,41 +1139,44 @@ def main():
                     ),
                     flush=True,
                 )
-                return True
-            except Exception as error:  # noqa: BLE001 -- Persist safe error categories and retain the cache.
+                return result
+            except Exception as error:
                 cache.fail(error)
                 print(
                     json.dumps({"refreshFailed": True, "error": type(error).__name__}),
                     flush=True,
                 )
-                return False
+                raise
 
         if args.command == "refresh":
             try:
-                success = collect()
-                if success:
+                result = collect()
+                if not result.get("deferred"):
                     worker.run(worker.images.prefetch_pending())
-                raise SystemExit(0 if success else 1)
+                raise SystemExit(1 if result.get("deferred") else 0)
             finally:
                 worker.close()
         stop = threading.Event()
-        server = make_server(cache, config, worker.images)
+        collection = CollectionController(collect)
+        server = make_server(cache, config, worker.images, collection)
 
         def loop():
-            # A service restart must not cause another Telegram scan inside the interval.
-            status = cache.status()
-            last_attempt = max(status["lastRefresh"], status["lastAttempt"])
-            delay = (
-                max(0, config["interval"] - (time.time() - last_attempt))
-                if last_attempt
-                else 0
-            )
-            if delay and stop.wait(delay):
-                return
             while not stop.is_set():
-                collect()
-                if stop.wait(max(30, config["interval"])):
-                    break
+                status = cache.status()
+                current = collection.snapshot()
+                # Manual rounds reset the timer too; restarts keep the persisted interval.
+                last_attempt = max(
+                    status["lastRefresh"], status["lastAttempt"], current["finishedAt"]
+                )
+                delay = max(
+                    0, max(30, config["interval"]) - (time.time() - last_attempt)
+                )
+                if current["state"] == "running":
+                    stop.wait(1)
+                elif delay:
+                    stop.wait(min(delay, 30))
+                else:
+                    collection.trigger()
 
         signal.signal(
             signal.SIGTERM,

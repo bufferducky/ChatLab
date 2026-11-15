@@ -157,5 +157,13 @@
     "weixin": "WeChat",
     "mixed": "Multiple platforms",
     "unknown": "Unknown source"
-  }
+  },
+  "conversations": "Conversations",
+  "chatHistory": "Chat history",
+  "collectAndUpdate": "Collect and update now",
+  "collecting": "Collecting and updating",
+  "collectDone": "Updated: {count} new messages",
+  "collectFailed": "Collection failed",
+  "collectPartial": "Existing messages imported; collection or some imports did not finish",
+  "collectPullOnly": "Pulled previously collected data only: {count} new messages"
 }

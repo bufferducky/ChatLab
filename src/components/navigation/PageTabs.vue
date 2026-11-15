@@ -33,25 +33,26 @@ function selectItem(item: PageTabItem): void {
 <template>
   <div class="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-3">
     <nav class="max-w-full shrink-0 overflow-x-auto scrollbar-hide" :aria-label="ariaLabel">
-      <div class="flex w-max items-center gap-0.5">
-        <component
-          :is="item.to ? RouterLink : 'button'"
-          v-for="item in items"
-          :key="item.id"
-          :to="item.to"
-          :type="item.to ? undefined : 'button'"
-          class="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors"
-          :class="
-            modelValue === item.id
-              ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300'
-              : 'text-gray-600 hover:bg-primary-50 dark:text-gray-400 dark:hover:bg-primary-900/20'
-          "
-          :aria-pressed="item.to ? undefined : modelValue === item.id"
-          @click="selectItem(item)"
-        >
-          <UiIcon v-if="item.icon" :name="item.icon" size="sm" />
-          <span>{{ item.label }}</span>
-        </component>
+      <div class="flex w-max items-center gap-5">
+        <template v-for="item in items" :key="item.id">
+          <component
+            :is="item.to ? RouterLink : 'button'"
+            :to="item.to"
+            :type="item.to ? undefined : 'button'"
+            class="flex shrink-0 items-center gap-1.5 border-b-2 px-0.5 py-3 text-xs font-medium whitespace-nowrap transition-colors"
+            :class="
+              modelValue === item.id
+                ? 'border-gray-900 text-gray-900 dark:border-gray-100 dark:text-gray-100'
+                : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
+            "
+            :aria-pressed="item.to ? undefined : modelValue === item.id"
+            @click="selectItem(item)"
+          >
+            <UiIcon v-if="item.icon" :name="item.icon" size="sm" />
+            <span>{{ item.label }}</span>
+          </component>
+          <slot name="after-item" :item="item" />
+        </template>
       </div>
     </nav>
 

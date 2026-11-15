@@ -90,6 +90,13 @@ const {
   validTabIds: tabs.map((tab) => tab.id),
 })
 
+const collectionRevision = ref(0)
+async function refreshCollected(sessionId: string) {
+  if (sessionId !== currentSessionId.value) return
+  collectionRevision.value += 1
+  await loadData()
+}
+
 provide('session-switch-loading', isSessionSwitching)
 
 const trackInsightTab = useInsightTabAnalytics({
@@ -142,9 +149,11 @@ const filteredMemberCount = computed(() => {
         @update:full-range="fullTimeRange = $event"
         @update:available-years="availableYears = $event"
         @time-range-initialized="handleTimeRangeInitialized"
+        @collected="refreshCollected"
       />
 
       <SidePanelLayout
+        :refresh-key="collectionRevision"
         :session-id="currentSessionId"
         :default-view="activeTab === 'memory' && !IS_WEB_WASM ? 'topics' : 'records'"
       >
@@ -186,7 +195,7 @@ const filteredMemberCount = computed(() => {
               />
               <MemoryTab
                 v-else-if="activeTab === 'memory'"
-                :key="'memory-' + currentSessionId"
+                :key="`memory-${currentSessionId}-${collectionRevision}`"
                 :session-id="currentSessionId!"
                 :session-name="session.name"
               />

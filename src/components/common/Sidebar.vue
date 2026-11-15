@@ -470,16 +470,16 @@ function getSessionAvatar(session: AnalysisSession): string | null {
 // 根据会话 ID 生成雅致的莫兰迪色系头像背景和文字颜色
 function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
   if (isActive) {
-    return 'bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400'
+    return 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
   }
 
   // 雅致的低饱和度配色方案，提升侧边栏的简洁感与品质感
   const palettes = [
-    { bg: 'bg-pink-50 dark:bg-pink-950/20', text: 'text-pink-600 dark:text-pink-400' },
-    { bg: 'bg-blue-50 dark:bg-blue-950/20', text: 'text-blue-600 dark:text-blue-400' },
-    { bg: 'bg-emerald-50 dark:bg-emerald-950/20', text: 'text-emerald-600 dark:text-emerald-400' },
-    { bg: 'bg-purple-50 dark:bg-purple-950/20', text: 'text-purple-600 dark:text-purple-400' },
-    { bg: 'bg-amber-50 dark:bg-amber-950/20', text: 'text-amber-600 dark:text-amber-400' },
+    { bg: 'bg-stone-200/70 dark:bg-stone-800', text: 'text-stone-600 dark:text-stone-300' },
+    { bg: 'bg-slate-200/70 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300' },
+    { bg: 'bg-zinc-200/70 dark:bg-zinc-800', text: 'text-zinc-600 dark:text-zinc-300' },
+    { bg: 'bg-neutral-200/70 dark:bg-neutral-800', text: 'text-neutral-600 dark:text-neutral-300' },
+    { bg: 'bg-stone-100 dark:bg-stone-800', text: 'text-stone-600 dark:text-stone-300' },
   ]
 
   const idStr = session.id || ''
@@ -495,10 +495,10 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
 <template>
   <div
     class="flex h-full shrink-0 overflow-hidden border-r border-chat-divider bg-session-bg dark:border-white/5 dark:bg-sidebar-dark"
-    :class="isCollapsed ? 'w-16' : 'w-[328px]'"
+    :class="isCollapsed ? 'w-[60px]' : 'w-[326px]'"
   >
     <nav
-      class="flex w-16 shrink-0 flex-col items-center border-r border-chat-divider py-3 dark:border-white/5"
+      class="flex w-[60px] shrink-0 flex-col items-center border-r border-chat-divider bg-nav-bg py-3 dark:border-white/5 dark:bg-nav-dark"
       :class="hasMacTitlebarInset ? 'pt-10' : ''"
       :aria-label="t('layout.brand')"
     >
@@ -507,7 +507,7 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
         :accessible-label="t(isCollapsed ? 'common.expandSidebar' : 'common.collapseSidebar')"
         @click="toggleSidebar"
       >
-        <img :src="logoSvg" alt="ChatLab" class="size-6 select-none pointer-events-none" />
+        <img :src="logoSvg" alt="ChatLab" class="size-6 select-none pointer-events-none dark:invert" />
       </SidebarCollapseButton>
       <div class="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto px-2">
         <!-- 新建分析 -->
@@ -562,21 +562,36 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
     </nav>
 
     <!-- Session List -->
-    <div v-show="!isCollapsed" class="relative flex min-h-0 w-[264px] shrink-0 flex-col">
+    <div v-show="!isCollapsed" class="relative flex min-h-0 w-[266px] shrink-0 flex-col">
       <div
         class="flex h-14 shrink-0 items-center gap-2 px-4"
         :class="hasMacTitlebarInset ? 'mt-3' : ''"
         style="-webkit-app-region: drag"
       >
-        <img :src="logoSvg" alt="" class="size-5" />
-        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ t('layout.brand') }}</span>
-        <span class="text-[10px] text-gray-500">v{{ version }}</span>
+        <span class="text-base font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+          {{ t('common.conversations') }}
+        </span>
+        <span class="ml-auto text-[10px] text-gray-500" :title="`ChatLab v${version}`">ChatLab</span>
         <UButton v-if="hasUpdate" size="xs" variant="soft" class="ml-auto app-region-no-drag" @click="openUpdateModal">
           {{ t('layout.updateNotice.tag') }}
         </UButton>
       </div>
       <!-- 筛选与排序 - 固定在顶部，不随列表滚动 -->
-      <div v-if="!isCollapsed && sessions.length > 0" class="mb-2">
+      <div v-if="!isCollapsed && sessions.length > 0" class="mb-1 border-b border-chat-divider dark:border-white/5">
+        <!-- 搜索框 -->
+        <div v-if="showSearch" class="mb-3 px-4">
+          <UInput
+            v-model="searchQuery"
+            class="w-full"
+            :ui="{
+              base: 'bg-chat-control ring-0 dark:bg-chat-bubble-dark focus-visible:ring-2 focus-visible:ring-primary-500',
+            }"
+            :placeholder="t('layout.searchPlaceholder')"
+            :aria-label="t('layout.searchPlaceholder')"
+            icon="i-heroicons-magnifying-glass"
+            size="sm"
+          />
+        </div>
         <CompactTabs v-model="filterType" :items="filterTabItems" size="sm" :bordered="false">
           <template #right>
             <div class="flex items-center gap-0.5">
@@ -604,53 +619,43 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
             </div>
           </template>
         </CompactTabs>
-        <div class="mt-2 flex gap-1 overflow-x-auto px-4 pb-0.5" :aria-label="t('layout.sources.filter')" role="group">
+        <div class="mt-2 flex gap-1 overflow-x-auto px-4 pb-2.5" :aria-label="t('layout.sources.filter')" role="group">
           <button
             type="button"
-            class="min-h-7 shrink-0 whitespace-nowrap rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            class="min-h-7 shrink-0 whitespace-nowrap rounded-md px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
             :class="
               platformFilter === 'all'
-                ? 'border-gray-500 bg-gray-50 text-gray-900 dark:border-gray-400 dark:bg-white/5 dark:text-white'
-                : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/5'
+                ? 'bg-session-selected text-gray-900 dark:bg-session-selected-dark dark:text-white'
+                : 'text-gray-500 hover:bg-chat-control dark:text-gray-400 dark:hover:bg-white/5'
             "
             :aria-pressed="platformFilter === 'all'"
+            :aria-label="`${t('layout.sources.all')} (${searchMatchedSessions.length})`"
             @click="selectPlatform('all')"
           >
-            {{ t('layout.sources.all') }}
-            <span class="ml-1 tabular-nums">{{ searchMatchedSessions.length }}</span>
+            {{ t('layout.filter.all') }}
           </button>
           <button
             v-for="platform in platformFilters"
             :key="platform.key"
             type="button"
-            class="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
+            class="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] transition-colors focus-visible:outline-2 focus-visible:outline-primary-500"
             :class="
               platformFilter === platform.key
-                ? ['border-current', platform.badgeClass]
-                : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/5'
+                ? 'bg-session-selected text-gray-900 dark:bg-session-selected-dark dark:text-white'
+                : 'text-gray-500 hover:bg-chat-control dark:text-gray-400 dark:hover:bg-white/5'
             "
             :aria-pressed="platformFilter === platform.key"
             :aria-label="`${t(platform.labelKey)} (${platform.count})`"
             @click="selectPlatform(platform.key)"
           >
-            <UIcon :name="platform.icon" class="size-3" aria-hidden="true" />
-            {{ platform.key === 'wecom' ? t('layout.sources.wecomShort') : t(platform.labelKey) }}
-            <span class="tabular-nums">{{ platform.count }}</span>
+            {{
+              platform.key === 'wecom'
+                ? t('layout.sources.wecomShort')
+                : platform.key === 'telegram'
+                  ? 'TG'
+                  : t(platform.labelKey)
+            }}
           </button>
-        </div>
-        <!-- 搜索框 -->
-        <div v-if="showSearch" class="mt-2 px-4">
-          <UInput
-            v-model="searchQuery"
-            class="w-full"
-            :ui="{
-              base: 'bg-chat-control ring-0 dark:bg-chat-bubble-dark focus-visible:ring-2 focus-visible:ring-primary-500',
-            }"
-            :placeholder="t('layout.searchPlaceholder')"
-            :aria-label="t('layout.searchPlaceholder')"
-            icon="i-heroicons-magnifying-glass"
-            size="sm"
-          />
         </div>
       </div>
 
@@ -727,12 +732,12 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                 :content="{ side: 'right' }"
               >
                 <div
-                  class="group relative flex items-center text-left transition-all duration-200 cursor-pointer"
+                  class="group relative flex items-center text-left transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary-500"
                   :class="[
                     route.params.id === virtualSessionAt(virtualItem.index).id
                       ? 'bg-session-selected text-chat-text dark:bg-session-selected-dark dark:text-gray-100'
                       : 'text-chat-text dark:text-gray-200 hover:bg-chat-control dark:hover:bg-white/[0.04]',
-                    isCollapsed ? 'justify-center h-10 w-10 rounded-lg mx-auto' : 'h-14 w-full rounded-lg px-2',
+                    isCollapsed ? 'justify-center h-10 w-10 rounded-lg mx-auto' : 'h-14 w-full rounded-lg px-2.5',
                   ]"
                   role="button"
                   tabindex="0"
@@ -748,9 +753,9 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                     :alt="virtualSessionAt(virtualItem.index).name"
                     :text="getSessionAvatarText(virtualSessionAt(virtualItem.index))"
                     :root-class="['h-9 w-9 min-w-9 shrink-0', isCollapsed ? '' : 'mr-2.5']"
-                    image-class="h-9 w-9 rounded-full object-cover"
+                    image-class="h-9 w-9 rounded-xl object-cover"
                     :fallback-class="[
-                      'flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold select-none',
+                      'flex h-9 w-9 items-center justify-center rounded-xl text-xs font-semibold select-none',
                       getAvatarColorClass(
                         virtualSessionAt(virtualItem.index),
                         route.params.id === virtualSessionAt(virtualItem.index).id
@@ -777,7 +782,10 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
                       />
                     </div>
                     <div class="mt-1 flex min-w-0 items-center gap-1.5">
-                      <PlatformBadge :platform="virtualSessionAt(virtualItem.index).platform" />
+                      <span class="shrink-0 text-[10px] text-chat-muted dark:text-gray-400">
+                        {{ t(getChatPlatform(virtualSessionAt(virtualItem.index).platform).labelKey) }}
+                      </span>
+                      <span class="text-gray-400" aria-hidden="true">·</span>
                       <span class="truncate text-[11px] leading-none text-chat-muted dark:text-gray-400">
                         {{ t('layout.sessionInfo', { count: virtualSessionAt(virtualItem.index).messageCount }) }}
                       </span>

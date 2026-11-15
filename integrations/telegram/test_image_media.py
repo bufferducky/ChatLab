@@ -647,10 +647,6 @@ class ImageTests(unittest.TestCase):
         self.assertTrue(client.disconnected)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ImageSubscriptionTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancel_before_get_and_cancel_last_reader_never_mark_download_complete(
         self,
@@ -747,3 +743,129 @@ class ImageSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 await asyncio.sleep(0)
             self.assertTrue(stopped.is_set())
+
+
+class VideoTests(unittest.TestCase):
+    def test_video_metadata_and_recent_history_are_queued_without_reimport(self):
+        from bridge import convert_message
+        from image_media import image_metadata
+
+        message = types.Message(
+            id=99,
+            peer_id=types.PeerChat(2),
+            date=datetime.now(UTC),
+            message="video caption",
+            media=types.MessageMediaDocument(
+                document=types.Document(
+                    id=12,
+                    access_hash=2,
+                    file_reference=b"reference",
+                    date=datetime.now(UTC),
+                    mime_type="video/mp4",
+                    size=1024,
+                    dc_id=1,
+                    attributes=[
+                        types.DocumentAttributeVideo(
+                            duration=2, w=320, h=240, supports_streaming=True
+                        )
+                    ],
+                )
+            ),
+        )
+        metadata = image_metadata(message)
+        self.assertIsNotNone(metadata)
+        with tempfile.TemporaryDirectory() as root:
+            cache = Cache(root)
+            cache.bind_account(1)
+            sid = cache.session(1, -2, "Video", "group")
+            cache.ingest(sid, [convert_message(message)])
+            cache = Cache(root)
+            with cache.connect() as db:
+                row = db.execute(
+                    "SELECT * FROM image_metadata WHERE native_id=99"
+                ).fetchone()
+                self.assertEqual(row["original_done"], 0)
+                self.assertEqual(row["preview_done"], 1)
+                self.assertEqual(
+                    db.execute("SELECT count(*) FROM messages").fetchone()[0], 1
+                )
+            cache.ingest(sid, [], images=[("99", *metadata)])
+
+            async def run():
+                from types import SimpleNamespace
+                from unittest.mock import AsyncMock
+
+                data = bytes.fromhex("000000186674797069736f6d0000020069736f6d69736f32")
+                client = SimpleNamespace(
+                    is_connected=lambda: True,
+                    download_media=AsyncMock(return_value=data),
+                )
+                images = TelegramImages(cache, client, asyncio.get_running_loop())
+                self.assertEqual(await images.download(sid, "99", "original"), data)
+                self.assertIsNone(client.download_media.call_args.kwargs["thumb"])
+
+            asyncio.run(run())
+        message.document.size = 51 * 1024 * 1024
+        self.assertIsNone(image_metadata(message))
+
+
+class TextLinkTests(unittest.IsolatedAsyncioTestCase):
+    async def test_older_text_messages_restore_links_once_without_advancing_import_cursors(
+        self,
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from bridge import convert_message
+
+        with tempfile.TemporaryDirectory() as root:
+            cache = Cache(root)
+            cache.bind_account(1)
+            sid = cache.session(1, -2, "Links", "group")
+            messages = [
+                types.Message(
+                    id=mid,
+                    peer_id=types.PeerChat(2),
+                    date=datetime.now(UTC),
+                    message="read article",
+                    entities=[
+                        types.MessageEntityTextUrl(
+                            offset=5, length=7, url="https://example.com/article"
+                        )
+                    ],
+                )
+                for mid in (9, 10)
+            ]
+            cache.ingest(sid, [convert_message(message) for message in messages])
+            with cache.connect() as db:
+                before = db.execute(
+                    "SELECT value FROM state WHERE key='clock'"
+                ).fetchone()[0]
+            client = SimpleNamespace(
+                is_connected=lambda: True, get_messages=AsyncMock(return_value=messages)
+            )
+            images = TelegramImages(cache, client, asyncio.get_running_loop())
+            restored = await asyncio.gather(
+                *(images.resolve(sid, str(mid), "links") for mid in (9, 10))
+            )
+            self.assertEqual(
+                restored[0]["links"][0]["url"], "https://example.com/article"
+            )
+            self.assertEqual(await images.resolve(sid, "9", "links"), restored[0])
+            client.get_messages.assert_awaited_once_with(-2, ids=[9, 10])
+            with cache.connect() as db:
+                self.assertEqual(
+                    db.execute("SELECT value FROM state WHERE key='clock'").fetchone()[
+                        0
+                    ],
+                    before,
+                )
+                self.assertEqual(
+                    db.execute("SELECT count(*) FROM messages").fetchone()[0], 2
+                )
+            with self.assertRaises(KeyError):
+                await images.resolve(sid, "999", "links")
+
+
+if __name__ == "__main__":
+    unittest.main()

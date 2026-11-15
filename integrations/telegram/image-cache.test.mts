@@ -36,7 +36,7 @@ test('prefetched Telegram previews reuse the existing cache, caption and shared 
   assert.equal((await sharp(preview.data).metadata()).width, 640)
   const originalKey = createHash('sha256').update(`${url}/0?size=original`).digest('hex')
   assert.equal(await cache.get(originalKey), null)
-  // Ordinary image writes and prefetches share one budget, not 5 GiB each.
+  // Ordinary image writes and prefetches share one budget, not 30 GiB each.
   await cache.put('other-platform', { data: Buffer.alloc(4000, 1), mime: 'image/png' })
   const sizes = await Promise.all(
     (await readdir(directory)).filter((name) => name.endsWith('.bin')).map((name) => stat(path.join(directory, name)))
@@ -73,4 +73,34 @@ test('a prefetched original retains every byte and opens offline alongside its d
   const preview = await service.image('local', 1, 0, 'preview')
   assert.equal((await sharp(preview.data).metadata()).width, 640)
   assert.deepEqual(await service.manifest('local', 1), { images: [{ index: 0 }], caption: 'full detail' })
+})
+
+test('prefetched Telegram videos play from the same cache while the collector is offline', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'tg-video-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const cache = new MessageImageCache(directory, 4096)
+  const baseUrl = 'http://127.0.0.1:5036/api/v1'
+  const remote = 'telegram:1:-2'
+  const manifestUrl = `${baseUrl}/sessions/${encodeURIComponent(remote)}/messages/9/images`
+  const video = Buffer.concat([
+    Buffer.from('000000186674797069736f6d0000020069736f6d69736f32', 'hex'),
+    Buffer.alloc(2048),
+  ])
+  await cacheTelegramImage(cache, manifestUrl, 'video caption', video, 'original')
+  const service = new MessageImagesService({
+    cache,
+    loadSources: () => [
+      { id: 'tg', baseUrl, token: 'test', sessions: [{ targetSessionId: 'local', remoteSessionId: remote }] },
+    ],
+    resolveMessage: () => ({ platform: 'telegram', platformMessageId: '9' }),
+    fetch: async () => {
+      throw new Error('Offline')
+    },
+  })
+  assert.equal((await service.manifest('local', 1)).kind, 'video')
+  const result = await service.image('local', 1, 0, 'original')
+  assert.equal(result.mime, 'video/mp4')
+  assert.deepEqual(result.data, video)
+  await cache.put('image', { data: Buffer.alloc(3000, 2), mime: 'image/webp' })
+  await assert.rejects(service.image('local', 1, 0, 'original'), { statusCode: 503 })
 })

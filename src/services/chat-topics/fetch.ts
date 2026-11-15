@@ -111,8 +111,12 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   if (init.body !== undefined) headers.set('Content-Type', 'application/json')
   const response = await fetchWithAuth(url, { ...init, headers })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null
-    throw new Error(payload?.error || payload?.message || `HTTP ${response.status}`)
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string | { message?: string }
+      message?: string
+    } | null
+    const reason = typeof payload?.error === 'string' ? payload.error : payload?.error?.message
+    throw new Error(reason || payload?.message || `HTTP ${response.status}`)
   }
   return response.json() as Promise<T>
 }

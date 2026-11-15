@@ -139,7 +139,7 @@ function resetFilter() {
 </script>
 
 <template>
-  <div class="shrink-0 border-b border-chat-divider bg-session-bg px-4 py-2 dark:border-white/5 dark:bg-chat-dark">
+  <div class="shrink-0 border-b border-chat-divider bg-white px-6 py-2.5 dark:border-white/5 dark:bg-sidebar-dark">
     <div class="flex min-w-0 items-center gap-2">
       <UInput
         v-model="formData.keywords"
@@ -150,7 +150,7 @@ function resetFilter() {
         :placeholder="t('records.filter.keywordsPlaceholder')"
         :aria-label="t('records.filter.keywordsPlaceholder')"
         size="sm"
-        class="min-w-0 flex-1"
+        class="min-w-0 max-w-lg flex-1"
         @keydown="handleKeywordsKeydown"
       />
       <UButton
@@ -173,7 +173,6 @@ function resetFilter() {
           size="sm"
           :aria-label="t('records.filter.filter')"
         >
-          {{ t('records.filter.filter') }}
           <span
             v-if="appliedConditions.length"
             class="flex size-4 items-center justify-center rounded-full bg-primary-100 text-[10px] text-primary-700 dark:bg-primary-900 dark:text-primary-200"

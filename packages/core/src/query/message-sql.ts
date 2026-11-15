@@ -33,7 +33,7 @@ export const FULL_MSG_SELECT = `SELECT ${FULL_MSG_COLUMNS} ${FULL_MSG_FROM}`
 
 export const MSG_COUNT_FROM = `FROM message msg JOIN member m ON msg.sender_id = m.id`
 
-export const SYSTEM_MSG_FILTER = "COALESCE(m.account_name, '') != '系统消息'"
+export const SYSTEM_MSG_FILTER = "msg.type != 80 AND COALESCE(m.account_name, '') != '系统消息'"
 export const TEXT_ONLY_FILTER = "msg.type = 0 AND msg.content IS NOT NULL AND msg.content != ''"
 
 // ==================== Types ====================

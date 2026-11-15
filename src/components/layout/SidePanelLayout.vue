@@ -6,7 +6,12 @@ import { useI18n } from 'vue-i18n'
 import { useLayoutStore } from '@/stores/layout'
 
 const props = withDefaults(
-  defineProps<{ sessionId?: string | null; contextKey?: string | null; defaultView?: 'records' | 'topics' }>(),
+  defineProps<{
+    sessionId?: string | null
+    contextKey?: string | null
+    defaultView?: 'records' | 'topics'
+    refreshKey?: number
+  }>(),
   { defaultView: 'records' }
 )
 const ChatRecordWorkspace = defineAsyncComponent(() => import('@/components/common/ChatRecord/ChatRecordWorkspace.vue'))
@@ -33,8 +38,8 @@ const preferredWidth = computed({
 })
 const minimumWidth = computed(() => (records.value ? 480 : topics.value ? 288 : 360))
 // Measure the available page area, not the window: the main navigation also takes space.
-const overlay = computed(() => containerWidth.value < minimumWidth.value + 520)
-const maximumWidth = computed(() => Math.max(0, containerWidth.value - (overlay.value ? 16 : 520)))
+const overlay = computed(() => containerWidth.value < minimumWidth.value + 560)
+const maximumWidth = computed(() => Math.max(0, containerWidth.value - (overlay.value ? 16 : 560)))
 const width = computed(() => Math.min(maximumWidth.value, Math.max(minimumWidth.value, preferredWidth.value)))
 let previousFocus: HTMLElement | null = null
 let dragStartX = 0
@@ -159,7 +164,7 @@ onBeforeUnmount(() => {
       <!-- Keep the inner width stable while the outer shell collapses. -->
       <div class="h-full" :style="{ width: `${width}px` }">
         <div
-          class="relative flex h-full min-h-0 flex-col border-l border-chat-divider bg-session-bg dark:border-white/5 dark:bg-chat-dark"
+          class="relative flex h-full min-h-0 flex-col border-l border-chat-divider bg-white dark:border-white/5 dark:bg-sidebar-dark"
         >
           <div
             class="group absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none"
@@ -176,7 +181,7 @@ onBeforeUnmount(() => {
             <div class="h-full w-px transition-colors group-hover:bg-primary-400 group-focus:bg-primary-500" />
           </div>
 
-          <header class="flex h-12 shrink-0 items-center gap-2 border-b border-chat-divider px-3 dark:border-white/5">
+          <header class="flex h-12 shrink-0 items-center gap-2 border-b border-chat-divider px-4 dark:border-white/5">
             <UButton
               v-if="layout.canReturnSidePanel"
               icon="i-lucide-arrow-left"
@@ -204,6 +209,7 @@ onBeforeUnmount(() => {
             <ChatRecordWorkspace
               v-if="layout.chatRecordQuery"
               v-show="records"
+              :key="refreshKey"
               :initial-query="layout.chatRecordQuery"
               class="min-h-0 flex-1"
               mode="drawer"

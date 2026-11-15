@@ -574,7 +574,8 @@ export class PullEngine {
     if (!current || !current.enabled) return { ...ds, sessions: [] }
     if (!current.autoDiscoverSessions) return current
     const known = new Set(current.sessions.map((s) => s.remoteSessionId))
-    const added = sessions.filter((s) => !known.has(s.remoteSessionId))
+    const excluded = new Set(current.excludedRemoteSessionIds)
+    const added = sessions.filter((s) => !known.has(s.remoteSessionId) && !excluded.has(s.remoteSessionId))
     if (added.length) {
       this.dsManager.addSessions(ds.id, added)
       this.notifier.onSessionListChanged()

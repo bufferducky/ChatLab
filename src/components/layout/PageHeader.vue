@@ -10,6 +10,7 @@ import { useLayoutStore } from '@/stores/layout'
 
 const { t } = useI18n()
 const layout = useLayoutStore()
+const panelShortcut = navigator.platform.toLowerCase().includes('mac') ? '⌘L' : 'Ctrl+L'
 
 const props = withDefaults(
   defineProps<{
@@ -30,10 +31,10 @@ const props = withDefaults(
 
 <template>
   <div
-    class="relative px-6"
+    class="relative bg-white px-6 dark:bg-sidebar-dark"
     :class="[
       props.bordered ? 'border-b border-chat-divider dark:border-gray-800/50' : '',
-      props.size === 'compact' ? 'pb-1.5' : 'pb-2',
+      props.size === 'compact' ? 'pb-0' : 'pb-2',
     ]"
   >
     <!-- 拖拽区域 - 覆盖顶部安全区域（平台自适应）
@@ -49,28 +50,31 @@ const props = withDefaults(
           :src="avatar"
           :alt="title"
           class="shrink-0 object-cover"
-          :class="props.size === 'compact' ? 'h-6 w-6 rounded-md' : 'h-10 w-10 rounded-xl'"
+          :class="props.size === 'compact' ? 'h-8 w-8 rounded-lg' : 'h-10 w-10 rounded-xl'"
         />
         <!-- 可选图标（fallback） -->
         <div
           v-else-if="icon"
           class="flex shrink-0 items-center justify-center"
-          :class="[iconClass, props.size === 'compact' ? 'h-6 w-6 rounded-md' : 'h-10 w-10 rounded-xl']"
+          :class="[iconClass, props.size === 'compact' ? 'h-8 w-8 rounded-lg' : 'h-10 w-10 rounded-xl']"
         >
           <UIcon :name="icon" class="text-white" :class="props.size === 'compact' ? 'h-3 w-3' : 'h-5 w-5'" />
         </div>
-        <div class="group/title flex min-w-0 items-baseline gap-2">
+        <div
+          class="group/title flex min-w-0"
+          :class="props.size === 'compact' ? 'flex-col gap-0.5' : 'items-baseline gap-2'"
+        >
           <h1
             class="truncate font-semibold text-gray-900 dark:text-white"
             :title="title"
-            :class="props.size === 'compact' ? 'text-base' : 'text-lg'"
+            :class="props.size === 'compact' ? 'text-[15px]' : 'text-lg'"
           >
             {{ title }}
           </h1>
           <p
             v-if="description"
-            class="pointer-events-none whitespace-nowrap text-gray-500 opacity-0 transition-opacity duration-200 group-hover/title:opacity-100 dark:text-gray-400"
-            :class="props.size === 'compact' ? 'text-[11px]' : 'text-xs'"
+            class="min-w-0 truncate text-gray-500 dark:text-gray-400"
+            :class="props.size === 'compact' ? 'text-[11px]' : 'text-xs opacity-0 group-hover/title:opacity-100'"
           >
             {{ description }}
           </p>
@@ -81,7 +85,7 @@ const props = withDefaults(
       <div class="flex-1 self-stretch mx-4" style="-webkit-app-region: drag" />
 
       <!-- 右侧操作区域 -->
-      <div class="header-actions relative z-[40] flex shrink-0 items-center gap-2">
+      <div class="header-actions relative z-[40] flex shrink-0 items-center gap-1">
         <slot name="actions" />
         <UButton
           v-if="layout.canOpenSidePanel"
@@ -92,6 +96,7 @@ const props = withDefaults(
           size="sm"
           :class="layout.sidePanelOpen ? 'bg-gray-100 dark:bg-white/10' : ''"
           :aria-label="t(layout.sidePanelOpen ? 'common.sidePanel.collapse' : 'common.sidePanel.expand')"
+          :title="`${t(layout.sidePanelOpen ? 'common.sidePanel.collapse' : 'common.sidePanel.expand')} (${panelShortcut})`"
           :aria-expanded="layout.sidePanelOpen"
           aria-controls="app-side-panel"
           @click="layout.toggleSidePanel()"

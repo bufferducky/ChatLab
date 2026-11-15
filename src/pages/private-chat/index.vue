@@ -73,6 +73,7 @@ const {
   fullTimeRange,
   timeFilter,
   initialTimeState,
+  loadData,
   invalidateAnalysisData,
   handleTimeRangeInitialized,
 } = useSessionAnalysisPageBase({
@@ -84,6 +85,13 @@ const {
     IS_WEB_WASM && settingsStore.defaultSessionTab === 'memory' ? 'insights' : settingsStore.defaultSessionTab,
   validTabIds: tabs.map((tab) => tab.id),
 })
+
+const collectionRevision = ref(0)
+async function refreshCollected(sessionId: string) {
+  if (sessionId !== currentSessionId.value) return
+  collectionRevision.value += 1
+  await loadData()
+}
 
 provide('session-switch-loading', isSessionSwitching)
 
@@ -162,9 +170,11 @@ const otherMemberAvatar = computed(() => {
         @open-member-management="showMemberManagementModal = true"
         @update:full-range="fullTimeRange = $event"
         @time-range-initialized="handleTimeRangeInitialized"
+        @collected="refreshCollected"
       />
 
       <SidePanelLayout
+        :refresh-key="collectionRevision"
         :session-id="currentSessionId"
         :default-view="activeTab === 'memory' && !IS_WEB_WASM ? 'topics' : 'records'"
       >
@@ -200,7 +210,7 @@ const otherMemberAvatar = computed(() => {
               />
               <MemoryTab
                 v-else-if="activeTab === 'memory'"
-                :key="'memory-' + currentSessionId"
+                :key="`memory-${currentSessionId}-${collectionRevision}`"
                 :session-id="currentSessionId!"
                 :session-name="session.name"
               />

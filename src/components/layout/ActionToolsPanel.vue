@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useLayoutStore } from '@/stores/layout'
+import CaptureButton from '@/components/common/CaptureButton.vue'
 
 const { t } = useI18n()
 const layoutStore = useLayoutStore()
@@ -46,56 +47,41 @@ const tools = [
   {
     event: 'openIncrementalImport' as const,
     icon: 'i-heroicons-plus-circle',
-    hoverColor: 'group-hover:text-pink-500',
-    miniHoverBg: 'hover:text-pink-500',
+    hoverColor: 'text-inherit',
+    miniHoverBg: 'text-inherit',
     labelKey: 'analysis.tooltip.incrementalImport',
   },
   {
     event: 'openSemanticIndex' as const,
     icon: 'i-heroicons-circle-stack',
-    hoverColor: 'group-hover:text-indigo-500',
-    miniHoverBg: 'hover:text-indigo-500',
+    hoverColor: 'text-inherit',
+    miniHoverBg: 'text-inherit',
     labelKey: 'analysis.tooltip.semanticIndex',
   },
   {
     event: 'openMemberManagement' as const,
     icon: 'i-heroicons-user-group',
-    hoverColor: 'group-hover:text-purple-500',
-    miniHoverBg: 'hover:text-purple-500',
+    hoverColor: 'text-inherit',
+    miniHoverBg: 'text-inherit',
     labelKey: 'analysis.tooltip.memberManagement',
   },
   {
     event: 'openChatRecord' as const,
     icon: 'i-heroicons-chat-bubble-bottom-center-text',
-    hoverColor: 'group-hover:text-cyan-500',
-    miniHoverBg: 'hover:text-cyan-500',
+    hoverColor: 'text-inherit',
+    miniHoverBg: 'text-inherit',
     labelKey: 'analysis.tooltip.viewChatRecord',
   },
   {
     event: 'openMessageExport' as const,
     icon: 'i-heroicons-document-arrow-down',
-    hoverColor: 'group-hover:text-green-500',
-    miniHoverBg: 'hover:text-green-500',
+    hoverColor: 'text-inherit',
+    miniHoverBg: 'text-inherit',
     labelKey: 'analysis.messageExport.title',
   },
 ]
 
-const headerTools = [
-  {
-    event: 'openSemanticIndex' as const,
-    icon: 'i-heroicons-circle-stack',
-    hoverColor: 'group-hover:text-indigo-500',
-    miniHoverBg: 'hover:text-indigo-500',
-    labelKey: 'analysis.tooltip.semanticIndex',
-  },
-  {
-    event: 'openMessageExport' as const,
-    icon: 'i-heroicons-document-arrow-down',
-    hoverColor: 'group-hover:text-green-500',
-    miniHoverBg: 'hover:text-green-500',
-    labelKey: 'analysis.messageExport.title',
-  },
-]
+const headerTools = tools.filter((tool) => tool.event !== 'openChatRecord')
 
 const visibleTools = computed(() => (isHeaderMode.value ? headerTools : tools))
 
@@ -144,17 +130,20 @@ onBeforeUnmount(() => {
   </div>
 
   <!-- header 模式：点击更多后从右侧滑入；side 模式：面板常驻 -->
-  <div v-else class="fixed right-0 z-40" :class="isHeaderMode ? 'top-14' : 'top-1/3'">
+  <div v-else class="fixed right-0 z-40" :class="isHeaderMode ? 'top-14 right-5' : 'top-1/3'">
     <div
       class="absolute right-0 top-0 transition-all duration-250 ease-in-out"
-      :class="isPanelVisible ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'"
+      :class="isPanelVisible ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'"
+      :inert="!isPanelVisible"
+      :aria-hidden="!isPanelVisible"
+      @keydown.esc.stop="isToolsPanelOpen = false"
     >
       <div
         ref="panelRef"
-        class="no-capture flex w-40 flex-col rounded-l-xl border border-r-0 border-gray-200/60 bg-white p-3 shadow-overlay dark:border-white/5 dark:bg-page-dark"
+        class="no-capture flex w-52 flex-col rounded-xl border border-gray-200/80 bg-white p-2 shadow-overlay dark:border-white/5 dark:bg-page-dark"
       >
         <div class="mb-2 flex items-center justify-between">
-          <span class="px-0.5 text-[9px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+          <span class="px-2 pt-1 text-[11px] font-medium text-gray-500 dark:text-gray-500">
             {{ t('analysis.overview.tools') }}
           </span>
           <!-- Mini 模式按钮（仅 side 模式） -->
@@ -168,11 +157,11 @@ onBeforeUnmount(() => {
           </UTooltip>
         </div>
 
-        <div class="flex flex-col gap-1.5">
+        <div class="flex flex-col gap-0.5">
           <button
             v-for="tool in visibleTools"
             :key="tool.event"
-            class="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium text-gray-600 transition-all hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white"
+            class="group flex w-full items-center gap-2 rounded-md px-2 py-2 text-xs font-medium text-gray-600 transition-all hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white"
             @click="handleToolClick(tool.event)"
           >
             <UIcon
@@ -182,6 +171,12 @@ onBeforeUnmount(() => {
             />
             <span class="whitespace-nowrap">{{ t(tool.labelKey) }}</span>
           </button>
+          <CaptureButton
+            v-if="isHeaderMode"
+            color="neutral"
+            :label="t('common.capture')"
+            class="w-full justify-start rounded-md px-2 py-2 text-xs"
+          />
         </div>
       </div>
     </div>

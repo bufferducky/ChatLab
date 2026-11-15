@@ -18,20 +18,22 @@
   --color-blue-800: #154f98;
   --color-blue-900: #17447b;
   --color-blue-950: #102b4d;
-  --color-chat-bg: #f5f5f5;
-  --color-chat-divider: #ebebeb;
-  --color-chat-control: #ebebeb;
-  --color-chat-dark: #202124;
+  --color-chat-bg: #f2f3f3;
+  --color-chat-divider: #e5e7e8;
+  --color-chat-control: #eeefef;
+  --color-chat-dark: #171a1c;
   --color-chat-bubble: #ffffff;
-  --color-chat-bubble-dark: #2d2e31;
-  --color-chat-text: #000000;
-  --color-chat-muted: #999999;
+  --color-chat-bubble-dark: #272c2f;
+  --color-chat-text: #202326;
+  --color-chat-muted: #6b7278;
   --color-chat-muted-dark: #a3a3a3;
-  --color-chat-owner: #e2efff;
-  --color-chat-owner-dark: #243c58;
-  --color-session-bg: #f5f5f5;
-  --color-session-selected: #e2e2e2;
-  --color-session-selected-dark: #36373a;
+  --color-chat-owner: #e7e9e9;
+  --color-chat-owner-dark: #333b3e;
+  --color-session-bg: #fafafa;
+  --color-nav-bg: #f5f6f6;
+  --color-nav-dark: #181b1d;
+  --color-session-selected: #e8eaeb;
+  --color-session-selected-dark: #33393d;
   --color-pink-50: #fff1f2;
   --color-pink-100: #fee5e8;
   --color-pink-200: #fccfd5;
@@ -45,15 +47,15 @@
   --color-pink-950: #4a071c;
 
   /* 页面背景 - 语义化主题 Token，未来可通过设置动态覆盖 */
-  --color-page-bg: #f5f5f5;
-  --color-page-dark: #181818;
+  --color-page-bg: #ffffff;
+  --color-page-dark: #171a1c;
 
   /* 卡片背景 - 语义化主题 Token，未来可通过设置动态覆盖 */
   --color-card-bg: #ffffff;
   --color-card-dark: rgba(255, 255, 255, 0.03);
 
   /* 悬浮侧栏背景 */
-  --color-sidebar-dark: #202024;
+  --color-sidebar-dark: #1c1f21;
 
   /* 悬浮表面阴影 - 减少向下偏移，避免底边过重 */
   --shadow-elevated: 0 10px 28px -12px rgb(15 23 42 / 0.22), 0 3px 10px -4px rgb(15 23 42 / 0.1);
@@ -62,13 +64,34 @@
   --shadow-overlay: 0 18px 48px -20px rgb(15 23 42 / 0.32), 0 8px 20px -12px rgb(15 23 42 / 0.16);
 }
 
-/* Keep filled controls readable while retaining the lighter blue for accents. */
+/* Neutral chrome lets the message stream and orange navigation feedback lead. */
 :root {
-  --ui-primary: var(--color-blue-600);
+  --ui-color-primary-50: var(--color-zinc-50);
+  --ui-color-primary-100: var(--color-zinc-100);
+  --ui-color-primary-200: var(--color-zinc-200);
+  --ui-color-primary-300: var(--color-zinc-300);
+  --ui-color-primary-400: var(--color-zinc-400);
+  --ui-color-primary-500: var(--color-zinc-500);
+  --ui-color-primary-600: var(--color-zinc-600);
+  --ui-color-primary-700: var(--color-zinc-700);
+  --ui-color-primary-800: var(--color-zinc-800);
+  --ui-color-primary-900: var(--color-zinc-900);
+  --ui-color-primary-950: var(--color-zinc-950);
+  --ui-primary: var(--color-zinc-900);
+  --chat-navigation-background: var(--color-orange-100);
+  --chat-navigation-accent: var(--color-orange-600);
 }
 
 .dark {
-  --ui-primary: var(--color-blue-400);
+  --ui-primary: var(--color-zinc-200);
+  --chat-navigation-background: var(--color-orange-950);
+  --chat-navigation-accent: var(--color-orange-400);
+}
+
+/* Inset marker preserves virtualized row measurements when a target is located. */
+.chat-message-target {
+  background-color: var(--chat-navigation-background);
+  box-shadow: inset 3px 0 0 var(--chat-navigation-accent);
 }
 
 /* 全局滚动条样式 */
@@ -160,4 +183,15 @@
   font-weight: var(--reading-font-weight);
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+/* Shared desktop controls use the same restrained geometry in menus and dialogs. */
+:focus-visible {
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-message-target {
+    transition: none;
+  }
 }

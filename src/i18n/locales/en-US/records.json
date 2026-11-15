@@ -219,5 +219,26 @@
       "IMAGE_TIMEOUT": "Image loading timed out. Try again."
     },
     "retryIn": "Rate limited. Retrying in {seconds} seconds."
+  },
+  "video": {
+    "player": "Video",
+    "loading": "Loading video…",
+    "loadFailed": "Could not load video. Please retry.",
+    "unsupported": "This video format cannot be played",
+    "openLarge": "Open large player"
+  },
+  "telegramService": {
+    "membersAdded": "Members joined the group",
+    "joinedByLink": "A member joined via an invite link",
+    "joinedByRequest": "A member joined after approval",
+    "memberRemoved": "A member left or was removed",
+    "groupCreated": "Group created",
+    "channelCreated": "Channel created",
+    "titleChanged": "Group name changed",
+    "photoChanged": "Group photo updated",
+    "messagePinned": "Message pinned",
+    "historyCleared": "Chat history cleared",
+    "groupMigrated": "Group upgraded or migrated",
+    "other": "Telegram service notification"
   }
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   MessageImageCache,
   prepareMessageImage,
+  prepareMessageVideo,
   type ImageManifest,
 } from '../../packages/node-runtime/src/services/message-images'
 
@@ -16,11 +17,12 @@ export async function cacheTelegramImage(
   size: 'preview' | 'original'
 ) {
   const started = performance.now()
-  const image = await prepareMessageImage(data, size)
-  const preview = size === 'original' ? await prepareMessageImage(data, 'preview') : undefined
+  const video = size === 'original' ? prepareMessageVideo(data) : null
+  const image = video ?? (await prepareMessageImage(data, size))
+  const preview = size === 'original' && !video ? await prepareMessageImage(data, 'preview') : undefined
   const prepared = performance.now()
   const key = (url: string) => createHash('sha256').update(url).digest('hex')
-  const manifest: ImageManifest = { images: [{ index: 0 }], caption }
+  const manifest: ImageManifest = { images: [{ index: 0 }], caption, ...(video ? { kind: 'video' } : {}) }
   await cache.put(key(manifestUrl), { data: Buffer.from(JSON.stringify(manifest)), mime: 'application/json' })
   await cache.put(key(`${manifestUrl}/0?size=${size}`), image)
   if (preview) await cache.put(key(`${manifestUrl}/0?size=preview`), preview)

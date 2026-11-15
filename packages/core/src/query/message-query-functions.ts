@@ -11,6 +11,7 @@
 import type { TimeFilter } from '@openchatlab/shared-types'
 import {
   FULL_MSG_SELECT,
+  SYSTEM_MSG_FILTER,
   FULL_MSG_FROM,
   MSG_COUNT_FROM,
   mapMessageRow,
@@ -56,6 +57,7 @@ function filterConditions(
     senderId,
     memberId: filter?.memberId,
     keywords,
+    systemFilter: true,
   })
 }
 
@@ -147,16 +149,16 @@ export async function fetchMessageContext(
     allIds.add(id)
     if (contextSize > 0) {
       const before = await executor.all<{ id: number }>(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts DESC, msg.id DESC LIMIT ?`,
         [id, contextSize]
       )
       before.forEach((r) => allIds.add(r.id))
 
       const after = await executor.all<{ id: number }>(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts ASC, msg.id ASC LIMIT ?`,
         [id, contextSize]
       )
@@ -168,7 +170,7 @@ export async function fetchMessageContext(
   if (idList.length === 0) return []
 
   const placeholders = idList.map(() => '?').join(', ')
-  const sql = `${FULL_MSG_SELECT} WHERE msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`
+  const sql = `${FULL_MSG_SELECT} WHERE ${SYSTEM_MSG_FILTER} AND msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`
   const rows = await executor.all<FullMessageRow>(sql, idList)
   return rows.map(mapMessageRow)
 }
@@ -215,7 +217,8 @@ export async function fetchSearchMessageContext(
           const rows = await executor.all<{ id: number }>(
             `SELECT msg.id FROM message_context mc
              JOIN message msg ON msg.id = mc.message_id
-             WHERE mc.segment_id = ? ORDER BY msg.ts ASC, msg.id ASC`,
+             JOIN member m ON msg.sender_id = m.id
+             WHERE ${SYSTEM_MSG_FILTER} AND mc.segment_id = ? ORDER BY msg.ts ASC, msg.id ASC`,
             [sessionRow.segment_id]
           )
           const ids = rows.map((row) => row.id)
@@ -237,8 +240,8 @@ export async function fetchSearchMessageContext(
 
     if (contextBefore > 0) {
       const rows = await executor.all<{ id: number }>(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) < (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts DESC, msg.id DESC LIMIT ?`,
         [messageId, contextBefore]
       )
@@ -246,8 +249,8 @@ export async function fetchSearchMessageContext(
     }
     if (contextAfter > 0) {
       const rows = await executor.all<{ id: number }>(
-        `SELECT msg.id FROM message msg
-         WHERE (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
+        `SELECT msg.id FROM message msg JOIN member m ON msg.sender_id = m.id
+         WHERE ${SYSTEM_MSG_FILTER} AND (msg.ts, msg.id) > (SELECT ts, id FROM message WHERE id = ?)
          ORDER BY msg.ts ASC, msg.id ASC LIMIT ?`,
         [messageId, contextAfter]
       )
@@ -259,13 +262,13 @@ export async function fetchSearchMessageContext(
   if (idList.length === 0) return []
 
   const placeholders = idList.map(() => '?').join(', ')
-  const sql = `${FULL_MSG_SELECT} WHERE msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`
+  const sql = `${FULL_MSG_SELECT} WHERE ${SYSTEM_MSG_FILTER} AND msg.id IN (${placeholders}) ORDER BY msg.ts ASC, msg.id ASC`
   const rows = await executor.all<FullMessageRow>(sql, idList)
   return rows.map(mapMessageRow)
 }
 
 /**
- * Get all recent messages (message viewer — includes all message types).
+ * Get recent user messages for reading, excluding system events.
  * Results are returned in ascending order (oldest → newest).
  */
 export async function fetchAllRecentMessages(
@@ -337,6 +340,7 @@ export async function fetchConversationBetween(
     startTs: filter?.startTs,
     endTs: filter?.endTs,
     memberId: filter?.memberId,
+    systemFilter: true,
   })
 
   const countSql = `

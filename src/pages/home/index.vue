@@ -109,7 +109,7 @@ const tutorialExportUrl = computed(() => {
           class="relative xl:mb-6 mb-4 flex items-center justify-center gap-4 select-none transition-all duration-700 ease-out"
           :class="isMounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'"
         >
-          <img :src="logoSvg" alt="ChatLab" class="h-10 w-10 select-none pointer-events-none" />
+          <img :src="logoSvg" alt="ChatLab" class="h-10 w-10 select-none pointer-events-none dark:invert" />
           <h1 class="text-3xl font-bold tracking-tight text-gray-900 dark:text-white leading-none">
             {{ t('home.tagline') }}
           </h1>

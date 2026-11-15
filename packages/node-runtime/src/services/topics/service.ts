@@ -66,7 +66,7 @@ export interface ChatTopicService {
   tickAutomation(): void
   getFeed(sessionId: string): ChatTopicFeed
   setAutomation(sessionId: string, settings: ChatTopicAutomationSettings): ChatTopicFeed
-  updateFeed(sessionId: string): ChatTopicRun | null
+  updateFeed(sessionId: string): Promise<ChatTopicRun | null>
   markRead(sessionId: string, topics: Array<{ id: string; version: number }>): void
   preflight(sessionId: string, request: CreateChatTopicsRequest): ChatTopicPreflight
   start(sessionId: string, request: CreateChatTopicsRequest): ChatTopicRun
@@ -185,7 +185,15 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     store.markLiveTopicsRead(sessionId, topics)
   }
 
-  function updateFeed(sessionId: string): ChatTopicRun | null {
+  async function updateFeed(sessionId: string): Promise<ChatTopicRun | null> {
+    assertOpen()
+    const active = store.getActiveRun()
+    if (active?.rangeKind === 'updates' && store.isLiveRunAutomatic(active.id)) {
+      // Manual updates have priority; committed batches remain available for catch-up.
+      cancel(active.sessionId, active.id)
+      store.setLiveRunAutomatic(active.id, true)
+      await waitForExecution(active.id)
+    }
     return startLiveRun(sessionId, false)
   }
 

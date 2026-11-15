@@ -18,6 +18,7 @@ const loading = ref(true)
 const busy = ref(false)
 const loadError = ref('')
 const showSettings = ref(false)
+const showStatusDetails = ref(false)
 const settings = ref<ChatTopicAutomationSettings | null>(null)
 const query = ref('')
 const dateFilter = ref('')
@@ -195,7 +196,7 @@ onUnmounted(() => {
         class="h-20 animate-pulse rounded-lg bg-gray-100 motion-reduce:animate-none dark:bg-gray-800"
       />
     </div>
-    <div v-else class="min-h-0 flex-1 overflow-y-auto p-3">
+    <div v-else class="min-h-0 flex-1 overflow-y-auto px-5 py-3">
       <div v-if="loadError" role="alert" class="mb-3 text-xs text-red-500">
         {{ loadError }}
         <UButton size="xs" variant="ghost" @click="refresh()">{{ t('records.topics.feed.retry') }}</UButton>
@@ -203,9 +204,18 @@ onUnmounted(() => {
       <template v-if="feed">
         <section class="mb-3 border-b border-gray-100 pb-3 dark:border-gray-800">
           <div class="flex items-center justify-between gap-2">
-            <p class="text-xs font-medium text-gray-700 dark:text-gray-200" role="status">
-              {{ t(`records.topics.feed.${status}`) }}
-            </p>
+            <button
+              type="button"
+              class="flex min-h-7 min-w-0 items-center gap-1.5 rounded text-left text-[11px] text-gray-500 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-gray-400 dark:hover:text-gray-100"
+              :aria-expanded="showStatusDetails"
+              @click="showStatusDetails = !showStatusDetails"
+            >
+              <span role="status">{{ t(`records.topics.feed.${status}`) }}</span>
+              <UIcon
+                :name="showStatusDetails ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                class="size-3 shrink-0"
+              />
+            </button>
             <UButton
               size="xs"
               color="neutral"
@@ -216,7 +226,7 @@ onUnmounted(() => {
               @click="openSettings"
             />
           </div>
-          <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+          <p v-if="showStatusDetails || showSettings" class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
             {{
               t('records.topics.feed.schedule', {
                 start: feed.settings.startTime,
@@ -225,7 +235,10 @@ onUnmounted(() => {
               })
             }}
           </p>
-          <div class="mt-2 space-y-1 text-[11px] tabular-nums text-gray-500 dark:text-gray-400">
+          <div
+            v-if="showStatusDetails || showSettings"
+            class="mt-2 space-y-1 text-[11px] tabular-nums text-gray-500 dark:text-gray-400"
+          >
             <p>{{ t('records.topics.feed.syncedAt', { time: formatDate(feed.syncedAt) }) }}</p>
             <p>{{ t('records.topics.feed.processedAt', { time: formatDate(feed.processedAt) }) }}</p>
             <p v-if="feed.pendingMessages">{{ t('records.topics.feed.pending', { count: feed.pendingMessages }) }}</p>
@@ -252,11 +265,14 @@ onUnmounted(() => {
               {{ t('records.topics.feed.timezone') }}
               <UInput v-model="settings.timezone" class="mt-1 w-full" />
             </label>
-            <p class="text-[11px] leading-relaxed text-gray-500">{{ t('records.topics.feed.scheduleHint') }}</p>
+            <p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+              {{ t('records.topics.feed.scheduleHint') }}
+            </p>
             <UButton size="xs" :loading="busy" @click="saveSettings">{{ t('records.topics.feed.save') }}</UButton>
           </div>
-          <div class="mt-3 flex flex-wrap gap-2">
+          <div v-if="feed.pendingMessages || active || unreadCount" class="mt-2 flex flex-wrap gap-1.5">
             <UButton
+              v-if="feed.pendingMessages || active"
               size="xs"
               variant="soft"
               :disabled="Boolean(active) || !feed.modelConfigured || !feed.pendingMessages"
@@ -276,7 +292,10 @@ onUnmounted(() => {
               {{ t('records.topics.feed.markShownRead') }}
             </UButton>
           </div>
-          <div v-if="feed.run && ['paused', 'failed'].includes(feed.run.status)" class="mt-2 text-xs text-gray-500">
+          <div
+            v-if="feed.run && ['paused', 'failed'].includes(feed.run.status)"
+            class="mt-2 text-xs text-gray-500 dark:text-gray-400"
+          >
             <p>{{ t(`records.topics.status.${feed.run.status}`) }}</p>
             <p v-if="feed.run.lastError" class="mt-1 text-red-500">{{ feed.run.lastError }}</p>
             <UButton
@@ -308,73 +327,86 @@ onUnmounted(() => {
             size="sm"
           />
         </div>
-        <p class="mb-2 text-[11px] text-gray-500">{{ t('records.topics.feed.unreadCount', { count: unreadCount }) }}</p>
+        <p class="mb-2 text-[11px] text-gray-500 dark:text-gray-400">
+          {{ t('records.topics.feed.unreadCount', { count: unreadCount }) }}
+        </p>
         <div v-if="!visibleTopics.length" class="py-8 text-center">
           <p class="text-sm font-medium text-gray-700 dark:text-gray-200">
             {{ t(mode === 'updates' ? 'records.topics.feed.noUpdates' : 'records.topics.feed.noTopics') }}
           </p>
-          <p class="mt-2 text-xs leading-relaxed text-gray-500">{{ t('records.topics.feed.emptyHint') }}</p>
+          <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            {{ t('records.topics.feed.emptyHint') }}
+          </p>
         </div>
-        <div class="space-y-3">
+        <div>
           <article
             v-for="topic in visibleTopics"
             :key="topic.id"
-            class="rounded-lg border bg-white p-3 dark:bg-gray-900/50"
+            class="border-b py-5 first:pt-2 last:border-b-0"
             :class="
               selectedId === topic.id
                 ? chatTopicColorStyle(colorIndex(topic)).selectedCard
-                : 'border-gray-200 dark:border-gray-700'
+                : 'border-gray-200/70 dark:border-gray-700/70'
             "
           >
             <div class="flex items-start justify-between gap-2">
               <button
-                class="text-left text-sm font-semibold leading-snug text-gray-800 outline-none hover:text-primary-500 focus-visible:ring-2 focus-visible:ring-primary-400 dark:text-gray-100"
+                class="text-left text-[13px] font-semibold leading-snug text-gray-800 outline-none hover:text-primary-500 focus-visible:ring-2 focus-visible:ring-primary-400 dark:text-gray-100"
                 @click="selectTopic(topic)"
               >
                 {{ topic.title }}
               </button>
               <span
                 v-if="topic.version > topic.readVersion"
-                class="shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] text-primary-600 dark:bg-primary-950/30 dark:text-primary-300"
+                class="shrink-0 text-[10px] text-gray-500 dark:text-gray-400"
               >
                 {{ t(topic.readVersion === 0 ? 'records.topics.feed.newTopic' : 'records.topics.feed.newProgress') }}
               </span>
             </div>
-            <p class="mt-1 text-[10px] tabular-nums text-gray-500">
+            <p class="mt-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400">
               {{ formatDate(topic.updatedAt) }} ·
               {{ t('records.topics.feed.messageCount', { count: topic.messageIds.length }) }}
             </p>
-            <div
+            <p class="reading-text mt-3 line-clamp-4 text-gray-600 dark:text-gray-300">
+              {{ topic.version > topic.readVersion ? topic.updates.at(-1)?.text || topic.summary : topic.summary }}
+            </p>
+            <details
               v-if="topic.version > topic.readVersion"
-              class="mt-3 border-l-2 border-primary-200 pl-2 dark:border-primary-800"
+              class="mt-3 border-l-2 border-gray-200 pl-2.5 dark:border-gray-700"
             >
-              <p class="mb-1 text-[11px] font-medium text-primary-600 dark:text-primary-300">
+              <summary class="cursor-pointer text-[11px] text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
                 {{ t('records.topics.feed.sinceRead') }}
-              </p>
+              </summary>
               <div
                 v-for="update in topic.updates.filter((item) => item.version > topic.readVersion)"
                 :key="update.version"
-                class="mb-2 last:mb-0"
+                class="mt-2.5 last:mb-0"
               >
                 <p class="reading-text whitespace-pre-line text-gray-700 dark:text-gray-200">{{ update.text }}</p>
                 <button
                   v-for="evidence in update.evidence.slice(-3)"
                   :key="evidence.messageId"
-                  class="mr-2 mt-1 text-[10px] text-primary-500 hover:underline focus-visible:outline-primary-400"
+                  class="mr-2 mt-1 text-[10px] text-orange-700 hover:underline focus-visible:outline-orange-500 dark:text-orange-300"
                   @click="selectTopic(topic, evidence.messageId)"
                 >
                   {{ formatDate(evidence.timestamp * 1000) }}
                 </button>
               </div>
-            </div>
-            <details class="mt-3" :open="mode === 'all' || topic.version <= topic.readVersion">
-              <summary class="cursor-pointer text-xs text-gray-500 hover:text-primary-500">
+            </details>
+            <details class="mt-3">
+              <summary class="cursor-pointer text-xs text-gray-500 hover:text-primary-500 dark:text-gray-400">
                 {{ t('records.topics.feed.currentSummary') }}
               </summary>
               <p class="reading-text mt-2 text-gray-700 dark:text-gray-200">{{ topic.summary }}</p>
             </details>
-            <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-2 dark:border-gray-800">
-              <UButton size="xs" color="neutral" variant="ghost" @click="selectTopic(topic)">
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                class="text-orange-700 dark:text-orange-300"
+                @click="selectTopic(topic)"
+              >
                 {{ t('records.topics.feed.viewOriginal') }}
               </UButton>
               <UButton
@@ -387,7 +419,7 @@ onUnmounted(() => {
               >
                 {{ t('records.topics.feed.markRead') }}
               </UButton>
-              <span v-if="topic.state === 'closed'" class="text-[10px] text-gray-500">
+              <span v-if="topic.state === 'closed'" class="text-[10px] text-gray-500 dark:text-gray-400">
                 {{ t('records.topics.topicState.closed') }}
               </span>
             </div>

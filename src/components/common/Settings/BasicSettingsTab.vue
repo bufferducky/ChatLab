@@ -162,7 +162,7 @@ const currentLocale = computed({
 const defaultTabOptions = computed(() => [
   { label: t('settings.basic.defaultTab.insights'), value: 'insights' },
   { label: t('settings.basic.defaultTab.aiChat'), value: 'ai-chat' },
-  ...(!IS_WEB_WASM ? [{ label: t('settings.basic.defaultTab.memory'), value: 'memory' }] : []),
+  ...(!IS_WEB_WASM ? [{ label: t('common.chatHistory'), value: 'memory' }] : []),
 ])
 
 // Tools panel position options
@@ -239,7 +239,7 @@ const desktopCloseBehaviorOptions = computed(() => [
     <!-- 外观设置 -->
     <div>
       <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-        <UIcon name="i-heroicons-paint-brush" class="h-4 w-4 text-pink-500" />
+        <UIcon name="i-heroicons-paint-brush" class="h-4 w-4 text-gray-500 dark:text-gray-400" />
         {{ t('settings.basic.appearance.title') }}
       </h3>
       <div class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
@@ -346,7 +346,7 @@ const desktopCloseBehaviorOptions = computed(() => [
     <!-- 偏好设置 -->
     <div v-if="showDefaultSessionTab || (showToolsPanel && debugMode)">
       <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-        <UIcon name="i-heroicons-adjustments-horizontal" class="h-4 w-4 text-purple-500" />
+        <UIcon name="i-heroicons-adjustments-horizontal" class="h-4 w-4 text-gray-500 dark:text-gray-400" />
         {{ t('settings.basic.preferences.title') }}
       </h3>
       <div class="rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">

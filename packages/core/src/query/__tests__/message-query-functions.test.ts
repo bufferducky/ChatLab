@@ -84,6 +84,43 @@ function createBackfilledMessageDb(): Database.Database {
 }
 
 describe('message pagination', () => {
+  it('hides system events without consuming reading pages, search totals or context slots', async () => {
+    const db = createMessageDb()
+    try {
+      db.exec(`INSERT INTO message (id, sender_id, ts, type, content) VALUES
+        (7, 1, 550, 80, '[MessageActionChatAddUser]'),
+        (8, 1, 560, 80, '[MessageActionChatDeleteUser]');`)
+      const executor = createSqliteExecutor(db)
+      const recent = await fetchAllRecentMessages(executor, undefined, 2)
+      assert.deepEqual(
+        recent.messages.map((message) => message.id),
+        [5, 6]
+      )
+      assert.equal(recent.total, 5)
+      assert.deepEqual(
+        (await fetchMessagesBefore(executor, 6, 2)).messages.map((message) => message.id),
+        [3, 5]
+      )
+      assert.deepEqual(
+        (await fetchMessagesAfter(executor, 3, 2)).messages.map((message) => message.id),
+        [5, 6]
+      )
+      assert.equal((await searchMessagesLikeAsync(executor, ['MessageAction'])).total, 0)
+      for (const messages of [
+        getMessageContext(new SqliteTestAdapter(db), [5], 1),
+        await fetchMessageContext(executor, 5, 1),
+        getSearchMessageContext(new SqliteTestAdapter(db), [5], 1, 1),
+        await fetchSearchMessageContext(executor, [5], 1, 1),
+      ])
+        assert.deepEqual(
+          messages.map((message) => message.id),
+          [3, 5, 6]
+        )
+      assert.equal((db.prepare('SELECT COUNT(*) AS n FROM message').get() as { n: number }).n, 8)
+    } finally {
+      db.close()
+    }
+  })
   it('returns chronological pages and accurate hasMore flags', async () => {
     const db = createMessageDb()
     try {
@@ -93,12 +130,12 @@ describe('message pagination', () => {
 
       assert.deepEqual(
         before.messages.map((message) => message.id),
-        [4, 5]
+        [3, 5]
       )
       assert.equal(before.hasMore, true)
       assert.deepEqual(
         after.messages.map((message) => message.id),
-        [2, 3, 4, 5, 6]
+        [2, 3, 5, 6]
       )
       assert.equal(after.hasMore, false)
     } finally {
@@ -195,10 +232,10 @@ describe('message search and context', () => {
     try {
       const result = await searchMessagesLikeAsync(createSqliteExecutor(db), ['hello'], undefined, 2, 0)
 
-      assert.equal(result.total, 4)
+      assert.equal(result.total, 3)
       assert.deepEqual(
         result.messages.map((message) => message.id),
-        [6, 4]
+        [6, 3]
       )
     } finally {
       db.close()
@@ -235,7 +272,7 @@ describe('message search and context', () => {
       const result = await fetchSearchMessageContext(createSqliteExecutor(db), [3], 1, 1)
       assert.deepEqual(
         result.map((message) => message.id),
-        [2, 3, 4]
+        [2, 3, 5]
       )
     } finally {
       db.close()
@@ -281,15 +318,15 @@ describe('message search and context', () => {
 })
 
 describe('recent messages', () => {
-  it('returns all message types in chronological order', async () => {
+  it('returns user message types in chronological order', async () => {
     const db = createMessageDb()
     try {
       const result = await fetchAllRecentMessages(createSqliteExecutor(db), undefined, 3)
 
-      assert.equal(result.total, 6)
+      assert.equal(result.total, 5)
       assert.deepEqual(
         result.messages.map((message) => message.id),
-        [4, 5, 6]
+        [3, 5, 6]
       )
     } finally {
       db.close()

@@ -26,6 +26,12 @@ test('a stored message resolves its original source ID without rewriting the mes
     )
     return { images: [{ index: 0 }], caption: 'caption' }
   })
+  let linkCalls = 0
+  remote.get('/api/v1/sessions/:sid/messages/:mid/links', (request) => {
+    linkCalls += 1
+    assert.equal(request.headers.authorization, 'Bearer synthetic-secret')
+    return { content: '[photo]', links: [{ offset: 0, length: 7, url: 'https://example.com/article' }] }
+  })
   const address = await remote.listen({ host: '127.0.0.1', port: 0 })
   t.after(() => remote.close())
   const app = Fastify()
@@ -47,6 +53,13 @@ test('a stored message resolves its original source ID without rewriting the mes
   assert.equal(response.statusCode, 200, response.body)
   assert.deepEqual(response.json(), { images: [{ index: 0 }], caption: 'caption' })
   assert.equal(response.headers['cache-control'], 'no-store')
+  for (let index = 0; index < 2; index += 1) {
+    const links = await app.inject('/_web/sessions/local/messages/7/links')
+    assert.equal(links.statusCode, 200, links.body)
+    assert.equal(links.json().links[0].url, 'https://example.com/article')
+  }
+  assert.equal(linkCalls, 1)
+  assert.equal((await app.inject('/_web/sessions/local/messages/8/links')).statusCode, 404)
   assert.equal((await app.inject('/_web/sessions/local/messages/7/images/0?size=invalid')).statusCode, 400)
   assert.equal((await app.inject('/_web/sessions/local/messages/8/images')).statusCode, 404)
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM message').get() as { n: number }).n, 1)

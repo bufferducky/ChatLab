@@ -132,11 +132,11 @@
   line-height: 1.6;
 }
 
-/* 引用块 - 使用项目主题粉色 */
+/* Quotes follow the neutral chrome; links retain the orange action accent. */
 .prose blockquote {
   margin: 12px 0 0;
   padding: 0 0 0 14px;
-  border-left: 2px solid var(--color-pink-500, #ee4567);
+  border-left: 2px solid var(--color-gray-300);
   border-radius: 0 0.25rem 0.25rem 0;
 }
 
@@ -149,15 +149,15 @@
   color: #9ca3af;
 }
 
-/* 链接 - 使用项目主题粉色 */
+/* Links */
 .prose a {
-  color: var(--color-pink-500, #ee4567);
+  color: var(--color-orange-700);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .prose a:hover {
-  color: var(--color-pink-600, #de335e);
+  color: var(--color-orange-800);
 }
 
 /* 分割线 */
@@ -223,11 +223,11 @@
 }
 
 .prose-invert a {
-  color: var(--color-pink-300, #faa7b4);
+  color: var(--color-orange-300);
 }
 
 .prose-invert a:hover {
-  color: var(--color-pink-200, #fccfd5);
+  color: var(--color-orange-200);
 }
 
 .prose-invert blockquote {

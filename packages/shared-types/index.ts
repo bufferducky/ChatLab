@@ -5,6 +5,18 @@
 
 // ==================== Plugin identity ====================
 
+export interface MessageLink {
+  /** UTF-16 offsets into the original message content, matching JavaScript strings. */
+  offset: number
+  length: number
+  url: string
+}
+
+export interface MessageLinks {
+  content: string
+  links: MessageLink[]
+}
+
 /** Stable identity shared by the UI and Node facets of the built-in plugin. */
 export const ANNUAL_SUMMARY_PLUGIN_ID = 'chatlab.insight.annual-summary'
 export const TIME_INVESTMENT_PLUGIN_ID = 'chatlab.insight.time-investment'

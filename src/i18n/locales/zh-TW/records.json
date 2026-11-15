@@ -219,5 +219,26 @@
       "IMAGE_TIMEOUT": "圖片載入逾時，請重試"
     },
     "retryIn": "請求受限，{seconds} 秒後自動重試"
+  },
+  "video": {
+    "player": "影片",
+    "loading": "正在載入影片…",
+    "loadFailed": "影片載入失敗，請稍後重試",
+    "unsupported": "目前影片格式暫無法播放",
+    "openLarge": "大視窗播放"
+  },
+  "telegramService": {
+    "membersAdded": "成員加入了群聊",
+    "joinedByLink": "成員透過邀請連結加入了群聊",
+    "joinedByRequest": "成員通過審核加入了群聊",
+    "memberRemoved": "成員退出或被移出了群聊",
+    "groupCreated": "建立了群聊",
+    "channelCreated": "建立了頻道",
+    "titleChanged": "修改了群聊名稱",
+    "photoChanged": "更新了群聊頭像",
+    "messagePinned": "置頂了一則訊息",
+    "historyCleared": "清空了聊天記錄",
+    "groupMigrated": "群聊已升級或遷移",
+    "other": "Telegram 系統通知"
   }
 }

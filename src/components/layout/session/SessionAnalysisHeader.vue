@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { getChatPlatform } from '@/utils/chat-platform'
 import { useLayoutStore } from '@/stores/layout'
 import type { AnalysisSession } from '@/types/base'
 import SessionSourceInfo from './SessionSourceInfo.vue'
+import SessionCollectButton from './SessionCollectButton.vue'
 import CaptureButton from '@/components/common/CaptureButton.vue'
 import TimeSelect from '@/components/common/TimeSelect.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
@@ -42,6 +44,7 @@ const emit = defineEmits<{
   (e: 'update:fullRange', value: { start: number; end: number } | null): void
   (e: 'update:availableYears', value: number[]): void
   (e: 'timeRangeInitialized', hasRange: boolean): void
+  (e: 'collected', sessionId: string): void
 }>()
 
 const { t } = useI18n()
@@ -49,41 +52,26 @@ const layoutStore = useLayoutStore()
 
 const timeSelectVisible = computed(() => !['ai-chat', 'memory', 'more'].includes(activeTab.value))
 const navigationItems = computed(() =>
-  props.tabs.map((tab) => ({
-    id: tab.id,
-    label: t(tab.labelKey),
-    icon: tab.icon,
-  }))
+  [...props.tabs]
+    .sort((a, b) => (a.id === 'memory' ? -1 : b.id === 'memory' ? 1 : 0))
+    .map((tab) => ({
+      id: tab.id,
+      label: t(tab.id === 'memory' ? 'common.chatHistory' : tab.labelKey),
+    }))
 )
 </script>
 
 <template>
-  <PageHeader :title="title" :avatar="avatar" size="compact" :icon="icon" :icon-class="iconClass">
+  <PageHeader
+    :title="title"
+    :description="`${t(getChatPlatform(session.platform).labelKey)} · ${t(`layout.filter.${session.type}`)} · ${t('layout.sessionInfo', { count: session.messageCount.toLocaleString() })}`"
+    :avatar="avatar"
+    size="compact"
+    :icon="icon"
+    icon-class="bg-gray-600 text-white dark:bg-gray-600"
+  >
     <template #actions>
       <template v-if="showSessionActions && layoutStore.effectiveToolsPanelPosition === 'header'">
-        <UTooltip :text="t('analysis.tooltip.incrementalImport')">
-          <UButton
-            icon="i-heroicons-plus-circle"
-            :aria-label="t('analysis.tooltip.incrementalImport')"
-            variant="ghost"
-            color="gray"
-            size="sm"
-            class="hover:bg-gray-100 dark:hover:bg-gray-800"
-            @click="emit('openIncrementalImport')"
-          />
-        </UTooltip>
-        <UTooltip :text="t('analysis.tooltip.memberManagement')">
-          <UButton
-            icon="i-heroicons-user-group"
-            :aria-label="t('analysis.tooltip.memberManagement')"
-            variant="ghost"
-            color="gray"
-            size="sm"
-            class="hover:bg-gray-100 dark:hover:bg-gray-800"
-            @click="emit('openMemberManagement')"
-          />
-        </UTooltip>
-        <CaptureButton color="gray" />
         <UTooltip :text="t('analysis.tooltip.more')">
           <UButton
             data-tools-panel-trigger
@@ -102,9 +90,17 @@ const navigationItems = computed(() =>
     </template>
 
     <div
-      class="mt-1.5 flex flex-col items-stretch gap-2 sm:min-h-8 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      class="mt-2 flex flex-col items-stretch gap-2 sm:min-h-8 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
     >
-      <PageTabs v-model="activeTab" class="min-w-0 shrink" :items="navigationItems" />
+      <PageTabs v-model="activeTab" class="min-w-0 shrink" :items="navigationItems">
+        <template #after-item="{ item }">
+          <SessionCollectButton
+            v-if="item.id === 'ai-chat' && currentSessionId"
+            :session-id="currentSessionId"
+            @collected="emit('collected', $event)"
+          />
+        </template>
+      </PageTabs>
       <!-- 不使用时间范围的一级 Tab 不挂载筛选器，避免发起无关查询。 -->
       <div v-if="timeSelectVisible" class="max-w-full overflow-x-auto scrollbar-hide">
         <TimeSelect

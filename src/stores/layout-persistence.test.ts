@@ -87,11 +87,14 @@ test('changing page context clears stale records and opens only the new session'
   assert.equal(store.sidePanelOpen, false)
 })
 
-test('memory context opens topics and the shared toggle restores topics after collapsing', async () => {
+test('memory context leaves room for reading and the shared toggle opens topics on demand', async () => {
   const pinia = createPersistedPinia(createMemoryStorage())
   const { useLayoutStore } = await import('./layout')
   const store = useLayoutStore(pinia)
   store.setSidePanelContext('session-a', 'topics')
+  assert.equal(store.sidePanelView, 'topics')
+  assert.equal(store.sidePanelOpen, false)
+  store.toggleSidePanel()
   assert.equal(store.sidePanelView, 'topics')
   assert.equal(store.sidePanelOpen, true)
   store.toggleSidePanel()

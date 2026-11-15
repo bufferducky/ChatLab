@@ -73,6 +73,20 @@ export function registerMessageImageRoutes(server: FastifyInstance, ctx: Context
   const validSession = (value: string) => typeof value === 'string' && value.length > 0 && value.length <= 512
   const validSize = (value: string): value is 'preview' | 'original' => value === 'preview' || value === 'original'
 
+  server.get<{ Params: Params }>('/_web/sessions/:id/messages/:messageId/links', async (request, reply) => {
+    const subscription = imageSubscription(request, reply)
+    try {
+      if (!validSession(request.params.id) || !validId(request.params.messageId)) throw invalidRequest()
+      reply.header('Cache-Control', 'no-store')
+      return await service.links(request.params.id, Number(request.params.messageId), subscription.signal)
+    } catch (error) {
+      if (error instanceof MessageImageError) return sendImageError(reply, error)
+      throw error
+    } finally {
+      subscription.release()
+    }
+  })
+
   server.get<{ Params: Params }>('/_web/sessions/:id/messages/:messageId/images', async (request, reply) => {
     const subscription = imageSubscription(request, reply)
     try {

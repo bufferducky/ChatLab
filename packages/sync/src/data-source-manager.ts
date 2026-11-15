@@ -148,6 +148,9 @@ export class DataSourceManager {
     if (updates.pullLimit !== undefined) ds.pullLimit = updates.pullLimit
     if (updates.enabled !== undefined) ds.enabled = updates.enabled
     if (updates.autoDiscoverSessions !== undefined) ds.autoDiscoverSessions = updates.autoDiscoverSessions
+    if (updates.excludedRemoteSessionIds !== undefined) {
+      ds.excludedRemoteSessionIds = [...new Set(updates.excludedRemoteSessionIds)]
+    }
     this.saveAll(sources)
     return ds
   }

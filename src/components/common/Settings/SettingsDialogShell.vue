@@ -33,7 +33,7 @@ const currentTab = computed({
     :open="open"
     :ui="{
       content: 'w-full sm:max-w-[900px] z-[100]',
-      overlay: 'z-[99] bg-gray-200/80 backdrop-blur-sm dark:bg-page-dark/80',
+      overlay: 'z-[99] bg-black/20 dark:bg-black/50',
     }"
     @update:open="emit('update:open', $event)"
   >
@@ -42,8 +42,8 @@ const currentTab = computed({
         <div class="shrink-0 border-b border-gray-200 px-4 pt-4 sm:px-6 sm:pt-5 dark:border-gray-800">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
-              <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 dark:bg-primary-500">
-                <UiIcon name="i-heroicons-cog-6-tooth" size="md" class="text-white" />
+              <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800">
+                <UiIcon name="i-heroicons-cog-6-tooth" size="md" class="text-gray-600 dark:text-gray-300" />
               </div>
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
                 {{ t('settings.title') }}
@@ -51,7 +51,7 @@ const currentTab = computed({
             </div>
             <UiIconButton icon="i-heroicons-x-mark" :label="t('common.close')" @click="emit('update:open', false)" />
           </div>
-          <PageTabs v-model="currentTab" class="mt-4 pb-3" :items="tabs" />
+          <PageTabs v-model="currentTab" class="mt-3" :items="tabs" />
         </div>
 
         <div class="relative flex-1">

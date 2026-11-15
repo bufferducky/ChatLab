@@ -14,6 +14,9 @@ import { getSenderColor, getSenderInitials } from './sender-presentation'
 import { useSessionStore } from '@/stores/session'
 import { IS_WEB_WASM } from '@/utils/platform'
 import MessageImages from './MessageImages.vue'
+import MessageVideo from './MessageVideo.vue'
+import MessageText from './MessageText.vue'
+import { localizeTelegramServiceMessage } from './message-content'
 
 const { t } = useI18n()
 
@@ -22,7 +25,7 @@ const props = defineProps<{
   message: ChatRecordMessage
   /** 是否为目标消息（需要高亮） */
   isTarget?: boolean
-  /** 话题高亮颜色；普通消息定位仍使用默认主色。 */
+  /** Topic color; navigation targets use the dedicated orange highlight. */
   topicColorIndex?: number
   /** 高亮关键词 */
   highlightKeywords?: string[]
@@ -44,6 +47,13 @@ const sessionStore = useSessionStore()
 const messageTime = computed(() => dayjs.unix(props.message.timestamp))
 const fullMessageTime = computed(() => messageTime.value.format('YYYY-MM-DD HH:mm:ss'))
 const imageCaption = ref<string | null>(null)
+const canLoadVideo = computed(
+  () =>
+    !IS_WEB_WASM &&
+    !!sessionStore.currentSessionId &&
+    sessionStore.currentSession?.platform === 'telegram' &&
+    props.message.type === 3
+)
 const canLoadImages = computed(
   () =>
     !IS_WEB_WASM &&
@@ -52,6 +62,7 @@ const canLoadImages = computed(
     [1, 5, 99].includes(props.message.type)
 )
 const imageMessageContent = computed(() => {
+  if (canLoadVideo.value) return visibleMessageContent.value.replace(/^\[video\]\s*/, '')
   if (!canLoadImages.value) return visibleMessageContent.value
   if (imageCaption.value !== null) return imageCaption.value
   if (props.message.type === 1) {
@@ -70,13 +81,18 @@ const isOwner = computed(() => {
 })
 
 const targetColor = computed(() =>
-  props.topicColorIndex === undefined
-    ? 'bg-primary-500/5 dark:bg-primary-500/10'
-    : chatTopicColorStyle(props.topicColorIndex).message
+  props.topicColorIndex === undefined ? 'chat-message-target' : chatTopicColorStyle(props.topicColorIndex).message
 )
 const showFullMessyContent = ref(false)
 
-const contentAnalysis = computed(() => analyzeMessyContent(props.message.content || ''))
+const contentAnalysis = computed(() => {
+  const content = props.message.content || ''
+  return analyzeMessyContent(
+    props.message.type === 80 && sessionStore.currentSession?.platform === 'telegram'
+      ? localizeTelegramServiceMessage(content, t)
+      : content
+  )
+})
 const visibleMessageContent = computed(() => {
   const analysis = contentAnalysis.value
   if (!analysis.shouldCollapse || showFullMessyContent.value) {
@@ -114,44 +130,11 @@ const focusLabel = computed(() =>
     name: displayName.value,
   })
 )
-
-const HIGHLIGHT_MARK_CLASS =
-  'bg-transparent text-inherit underline decoration-primary-500/80 underline-offset-4 dark:decoration-primary-400/80'
-
-function escapeHtml(content: string): string {
-  return content.replace(/[&<>"']/g, (char) => {
-    switch (char) {
-      case '&':
-        return '&amp;'
-      case '<':
-        return '&lt;'
-      case '>':
-        return '&gt;'
-      case '"':
-        return '&quot;'
-      case "'":
-        return '&#39;'
-      default:
-        return char
-    }
-  })
-}
-
-// 高亮关键词
-function highlightContent(content: string): string {
-  const escapedContent = escapeHtml(content)
-  const escapedKeywords = props.highlightKeywords?.map((keyword) => escapeHtml(keyword)).filter(Boolean) ?? []
-  if (!escapedKeywords.length || !escapedContent) return escapedContent
-
-  const pattern = escapedKeywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-  const regex = new RegExp(`(${pattern})`, 'gi')
-  return escapedContent.replace(regex, `<mark class="${HIGHLIGHT_MARK_CLASS}">$1</mark>`)
-}
 </script>
 
 <template>
   <div
-    class="group px-4 pb-1 transition-colors"
+    class="group px-6 pb-1 transition-colors"
     :class="[isContinuation ? 'pt-0.5' : 'pt-3', isTarget ? targetColor : '']"
     :data-sender-id="message.senderPlatformId"
     :data-sender-focused="isSenderFocused || undefined"
@@ -163,7 +146,7 @@ function highlightContent(content: string): string {
       <button
         v-if="!isContinuation"
         type="button"
-        class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold cursor-pointer transition-shadow hover:ring-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
+        class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-xl text-xs font-semibold cursor-pointer transition-shadow hover:ring-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
         :class="[senderColor.avatar, senderColor.text, senderColor.ring, { 'ring-2': isSenderFocused }]"
         :title="focusLabel"
         :aria-label="focusLabel"
@@ -181,8 +164,7 @@ function highlightContent(content: string): string {
         <div v-if="!isContinuation" class="mb-1 flex items-center gap-2" :class="isOwner ? 'flex-row-reverse' : ''">
           <button
             type="button"
-            class="text-left text-xs font-semibold cursor-pointer hover:underline underline-offset-2 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
-            :class="senderColor.text"
+            class="text-left text-[11px] font-medium text-gray-600 dark:text-gray-400 cursor-pointer hover:underline underline-offset-2 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500"
             :title="focusLabel"
             :aria-label="focusLabel"
             :aria-pressed="!!isSenderFocused"
@@ -204,9 +186,11 @@ function highlightContent(content: string): string {
         <!-- 气泡和上下文按钮 -->
         <div class="flex min-w-0 max-w-[min(88%,46rem)] items-start gap-1" :class="isOwner ? 'flex-row-reverse' : ''">
           <div
-            class="relative min-w-0 max-w-full rounded-xl px-3 py-2"
+            class="relative min-w-0 max-w-full rounded-xl px-3.5 py-2.5"
             :class="[
-              isOwner ? 'bg-chat-owner dark:bg-chat-owner-dark' : 'bg-chat-bubble dark:bg-chat-bubble-dark',
+              isOwner
+                ? 'rounded-tr-sm bg-chat-owner dark:bg-chat-owner-dark'
+                : 'rounded-tl-sm bg-chat-bubble dark:bg-chat-bubble-dark',
               isSenderFocused ? ['ring-2 ring-inset', senderColor.ring] : '',
             ]"
           >
@@ -258,6 +242,11 @@ function highlightContent(content: string): string {
                 {{ t('records.messageItem.originalNotImported') }}
               </span>
             </button>
+            <MessageVideo
+              v-if="canLoadVideo && sessionStore.currentSessionId"
+              :session-id="sessionStore.currentSessionId"
+              :message-id="message.id"
+            />
             <MessageImages
               v-if="canLoadImages && sessionStore.currentSessionId"
               :session-id="sessionStore.currentSessionId"
@@ -265,11 +254,16 @@ function highlightContent(content: string): string {
               :show-unavailable="message.type !== 99"
               @caption="imageCaption = $event"
             />
-            <p
+            <MessageText
               v-if="imageMessageContent"
               class="reading-text chat-record-message-content whitespace-pre-wrap break-all text-chat-text dark:text-gray-100"
               :class="{ 'mt-2': imageCaption !== null }"
-              v-html="highlightContent(imageMessageContent)"
+              :content="imageMessageContent"
+              :original-content="message.content"
+              :keywords="highlightKeywords"
+              :session-id="sessionStore.currentSessionId"
+              :message-id="message.id"
+              :load-links="!IS_WEB_WASM && sessionStore.currentSession?.platform === 'telegram'"
             />
             <ul
               v-if="imageCaption === null && contentAnalysis.linkUrls.length"

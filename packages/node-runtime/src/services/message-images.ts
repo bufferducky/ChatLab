@@ -2,10 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
+import type { MessageLinks } from '@openchatlab/shared-types'
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024
 const MAX_SOURCE_ERROR_BYTES = 8 * 1024
-export const DEFAULT_IMAGE_CACHE_BYTES = 5 * 1024 ** 3
+export const DEFAULT_IMAGE_CACHE_BYTES = 30 * 1024 ** 3
 const IMAGE_FORMATS: Record<string, string> = {
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -89,11 +90,20 @@ export class MessageImageError extends Error {
 export interface ImageManifest {
   images: Array<{ index: number }>
   caption: string
+  kind?: 'video'
 }
 
 export interface ImageBytes {
   data: Buffer
   mime: string
+}
+
+/** Identify supported video containers before admitting them to the shared media cache. */
+export function prepareMessageVideo(data: Buffer): ImageBytes | null {
+  if (data.length > MAX_IMAGE_BYTES) throw new MessageImageError(413, 'Video exceeds 50 MiB')
+  if (data.length >= 12 && data.toString('ascii', 4, 8) === 'ftyp') return { data, mime: 'video/mp4' }
+  if (data.length >= 4 && data.readUInt32BE(0) === 0x1a45dfa3) return { data, mime: 'video/webm' }
+  return null
 }
 
 /** Both on-demand downloads and collector prefetches use the same image validation. */
@@ -130,7 +140,10 @@ export class MessageImageCache {
   async get(key: string): Promise<ImageBytes | null> {
     try {
       const ref = JSON.parse(await fs.readFile(path.join(this.directory, `${key}.json`), 'utf8'))
-      if (!/^[a-f0-9]{64}$/.test(ref.blob) || ![...Object.values(IMAGE_FORMATS), 'application/json'].includes(ref.mime))
+      if (
+        !/^[a-f0-9]{64}$/.test(ref.blob) ||
+        ![...Object.values(IMAGE_FORMATS), 'video/mp4', 'video/webm', 'application/json'].includes(ref.mime)
+      )
         return null
       const file = path.join(this.directory, `${ref.blob}.bin`)
       const data = await fs.readFile(file)
@@ -420,10 +433,42 @@ export class MessageImagesService {
       const manifest = {
         images: data.images.map((image: { index: number }) => ({ index: image.index })),
         caption: typeof data.caption === 'string' ? data.caption : '',
+        ...(data.kind === 'video' ? { kind: 'video' as const } : {}),
       }
       if (manifest.images.length)
         await this.options.cache.put(key, { data: Buffer.from(JSON.stringify(manifest)), mime: 'application/json' })
       return manifest
+    })
+  }
+
+  async links(sessionId: string, messageId: number, signal?: AbortSignal): Promise<MessageLinks> {
+    const source = this.resolve(sessionId, messageId)
+    if (source.platform !== 'telegram') throw new MessageImageError(404, 'Message links unavailable')
+    const url = source.url.replace(/\/images$/, '/links')
+    const key = createHash('sha256').update(url).digest('hex')
+    const cached = await this.options.cache.get(key)
+    if (cached) return JSON.parse(cached.data.toString('utf8'))
+    return this.shared(key, source, signal, async (combined, requestId) => {
+      const response = await this.request(url, source.token, combined, requestId, source.base)
+      const data = JSON.parse((await this.readLimited(response, 256 * 1024)).toString('utf8')) as MessageLinks
+      if (
+        typeof data.content !== 'string' ||
+        !Array.isArray(data.links) ||
+        data.links.length > 1000 ||
+        data.links.some(
+          (link) =>
+            !Number.isSafeInteger(link.offset) ||
+            !Number.isSafeInteger(link.length) ||
+            link.offset < 0 ||
+            link.length < 1 ||
+            link.offset + link.length > data.content.length ||
+            typeof link.url !== 'string' ||
+            !/^https?:\/\//i.test(link.url)
+        )
+      )
+        throw new MessageImageError(502, 'Invalid message links')
+      await this.options.cache.put(key, { data: Buffer.from(JSON.stringify(data)), mime: 'application/json' })
+      return data
     })
   }
 
@@ -458,7 +503,10 @@ export class MessageImagesService {
       const response = await this.request(url, source.token, combined, requestId, source.base)
       const data = await this.readLimited(response, MAX_IMAGE_BYTES)
       combined.throwIfAborted()
-      const image = await prepareMessageImage(data, size)
+      const image =
+        source.platform === 'telegram' && size === 'original'
+          ? (prepareMessageVideo(data) ?? (await prepareMessageImage(data, size)))
+          : await prepareMessageImage(data, size)
       if (size === 'preview' || source.platform !== 'qq') await this.options.cache.put(key, image)
       return image
     })

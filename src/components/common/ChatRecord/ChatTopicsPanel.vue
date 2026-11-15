@@ -335,7 +335,7 @@ onUnmounted(() => {
     </Teleport>
 
     <div
-      class="flex shrink-0 gap-1 border-b border-gray-100 p-2 dark:border-gray-800"
+      class="flex shrink-0 gap-1 border-b border-gray-100 px-4 py-2.5 dark:border-gray-800"
       role="group"
       :aria-label="t('records.topics.feed.views')"
     >
@@ -343,7 +343,7 @@ onUnmounted(() => {
         v-for="mode in ['updates', 'all', 'day'] as const"
         :key="mode"
         size="xs"
-        :color="viewMode === mode ? 'primary' : 'neutral'"
+        color="neutral"
         :variant="viewMode === mode ? 'soft' : 'ghost'"
         :aria-pressed="viewMode === mode"
         @click="viewMode = mode"

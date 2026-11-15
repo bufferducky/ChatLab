@@ -156,6 +156,17 @@ async function handleRegenerateToken() {
 
 // ==================== Data Source ====================
 
+const sessionKeyword = ref('')
+const filteredDataSources = computed(() => {
+  const keyword = sessionKeyword.value.trim().toLocaleLowerCase()
+  return dataSources.value
+    .map((source) => ({
+      source,
+      sessions: source.sessions.filter((session) => !keyword || session.name.toLocaleLowerCase().includes(keyword)),
+    }))
+    .filter(({ sessions }) => !keyword || sessions.length > 0)
+})
+
 function openEditSource(ds: DataSource) {
   editingDataSource.value = ds
   showEditModal.value = true
@@ -269,8 +280,24 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
 
               <!-- Data source list -->
               <div v-if="dataSources.length > 0" class="mb-4 space-y-4">
+                <UInput
+                  v-model="sessionKeyword"
+                  type="search"
+                  icon="i-heroicons-magnifying-glass"
+                  :placeholder="t('settings.api.dataSources.discovery.searchPlaceholder')"
+                  :aria-label="t('settings.api.dataSources.discovery.searchPlaceholder')"
+                  class="w-full"
+                  @keydown.esc.stop="sessionKeyword = ''"
+                />
+                <p
+                  v-if="filteredDataSources.length === 0"
+                  role="status"
+                  class="py-4 text-center text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t('common.noResults') }}
+                </p>
                 <div
-                  v-for="ds in dataSources"
+                  v-for="{ source: ds, sessions } in filteredDataSources"
                   :key="ds.id"
                   class="rounded-lg border border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-800"
                 >
@@ -349,9 +376,9 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                   </div>
 
                   <!-- Session items -->
-                  <div v-if="ds.sessions.length > 0" class="max-h-80 overflow-y-auto">
+                  <div v-if="sessions.length > 0" class="max-h-80 overflow-y-auto">
                     <div
-                      v-for="sess in ds.sessions"
+                      v-for="sess in sessions"
                       :key="sess.id"
                       class="border-b border-gray-50 px-3 py-2.5 last:border-0 dark:border-gray-700/50"
                     >

@@ -38,11 +38,23 @@ export interface DataSource {
   createdAt: number
   /** Opt in to importing new conversations discovered on this source. */
   autoDiscoverSessions?: boolean
+  /** Explicitly removed remote chats must not be re-imported by automatic discovery. */
+  excludedRemoteSessionIds?: string[]
   sessions: ImportSession[]
 }
 
 export type DataSourceUpdatable = Partial<
-  Pick<DataSource, 'name' | 'baseUrl' | 'token' | 'intervalMinutes' | 'pullLimit' | 'enabled' | 'autoDiscoverSessions'>
+  Pick<
+    DataSource,
+    | 'name'
+    | 'baseUrl'
+    | 'token'
+    | 'intervalMinutes'
+    | 'pullLimit'
+    | 'enabled'
+    | 'autoDiscoverSessions'
+    | 'excludedRemoteSessionIds'
+  >
 >
 
 // ==================== Remote Discovery ====================

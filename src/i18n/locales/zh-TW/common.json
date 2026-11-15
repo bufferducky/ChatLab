@@ -157,5 +157,13 @@
     "weixin": "微信",
     "mixed": "多平台",
     "unknown": "來源未知"
-  }
+  },
+  "conversations": "對話",
+  "chatHistory": "聊天記錄",
+  "collectAndUpdate": "立即採集並更新",
+  "collecting": "正在採集並更新",
+  "collectDone": "採集更新完成，新增 {count} 則訊息",
+  "collectFailed": "採集更新失敗",
+  "collectPartial": "已拉取現有訊息，採集或部分同步未完成",
+  "collectPullOnly": "本次僅拉取已有採集資料，新增 {count} 則訊息"
 }

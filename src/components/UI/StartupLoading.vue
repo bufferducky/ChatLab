@@ -53,7 +53,7 @@ onBeforeUnmount(() => {
       <div class="startup-loader__glow" aria-hidden="true"></div>
       <div class="startup-loader__brand">
         <span class="startup-loader__logo-wrap" aria-hidden="true">
-          <img :src="logoSvg" alt="" class="startup-loader__logo" />
+          <img :src="logoSvg" alt="" class="startup-loader__logo dark:invert" />
         </span>
         <span class="startup-loader__name text-gray-900 dark:text-white" @animationend="completeAnimation">
           ChatLab
@@ -83,9 +83,9 @@ onBeforeUnmount(() => {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--color-pink-500) 7%, transparent) 34%,
-    color-mix(in srgb, var(--color-pink-500) 18%, transparent) 50%,
-    color-mix(in srgb, var(--color-pink-500) 7%, transparent) 66%,
+    color-mix(in srgb, var(--color-gray-500) 7%, transparent) 34%,
+    color-mix(in srgb, var(--color-gray-500) 18%, transparent) 50%,
+    color-mix(in srgb, var(--color-gray-500) 7%, transparent) 66%,
     transparent 100%
   );
   filter: blur(18px);
@@ -114,8 +114,8 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0.375rem;
   border-radius: 9999px;
-  background: color-mix(in srgb, var(--color-pink-500) 18%, transparent);
-  box-shadow: 0 0 26px color-mix(in srgb, var(--color-pink-500) 24%, transparent);
+  background: color-mix(in srgb, var(--color-gray-500) 18%, transparent);
+  box-shadow: 0 0 26px color-mix(in srgb, var(--color-gray-500) 24%, transparent);
   content: '';
   filter: blur(8px);
   animation: startup-loader-breathe var(--startup-animation-duration) ease-in-out both;
@@ -126,7 +126,6 @@ onBeforeUnmount(() => {
   width: 2.5rem;
   height: 2.5rem;
   user-select: none;
-  filter: drop-shadow(0 4px 10px color-mix(in srgb, var(--color-pink-500) 18%, transparent));
   pointer-events: none;
 }
 

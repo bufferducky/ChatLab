@@ -777,10 +777,6 @@ class CollectionTests(unittest.TestCase):
                 )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ImageProtocolTests(unittest.TestCase):
     def test_cancellation_is_authenticated_idempotent_and_rate_limit_seconds_survive_http(
         self,
@@ -834,3 +830,38 @@ class ImageProtocolTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(2)
+
+
+class LinkTests(unittest.TestCase):
+    def test_link_entities_keep_utf16_offsets_and_media_prefixes(self):
+        from bridge import extract_message_links
+
+        message = SimpleNamespace(
+            message="😀 看原文 @three001",
+            entities=[
+                types.MessageEntityTextUrl(
+                    offset=3, length=3, url="https://example.com/article?a=1&b=2"
+                ),
+                types.MessageEntityMention(offset=7, length=9),
+            ],
+        )
+        links = extract_message_links(message, "[video] " + message.message)
+        self.assertEqual(
+            links,
+            [
+                {
+                    "offset": 11,
+                    "length": 3,
+                    "url": "https://example.com/article?a=1&b=2",
+                },
+                {"offset": 15, "length": 9, "url": "https://t.me/three001"},
+            ],
+        )
+        message.entities = [
+            types.MessageEntityTextUrl(offset=3, length=3, url="javascript:alert(1)")
+        ]
+        self.assertEqual(extract_message_links(message, message.message), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

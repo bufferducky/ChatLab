@@ -157,5 +157,13 @@
     "weixin": "WeChat",
     "mixed": "複数プラットフォーム",
     "unknown": "不明なソース"
-  }
+  },
+  "conversations": "会話",
+  "chatHistory": "チャット履歴",
+  "collectAndUpdate": "今すぐ収集して更新",
+  "collecting": "収集して更新中",
+  "collectDone": "更新完了：新着 {count} 件",
+  "collectFailed": "収集に失敗しました",
+  "collectPartial": "保存済みのメッセージを取得しました。一部の収集または同期が未完了です",
+  "collectPullOnly": "収集済みデータのみ取得しました：新着 {count} 件"
 }

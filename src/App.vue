@@ -303,6 +303,13 @@ async function handleStartupCoverHidden(): Promise<void> {
 function handleGlobalKeydown(e: KeyboardEvent) {
   if (!isStartupCoverHidden.value || !isApplicationInteractive.value) return
   const isMeta = navigator.platform.toLowerCase().includes('mac') ? e.metaKey : e.ctrlKey
+  if (isMeta && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+    if (layoutStore.showSettings || !layoutStore.canOpenSidePanel) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.repeat) layoutStore.toggleSidePanel()
+    return
+  }
   // Ctrl+, → 打开设置
   if (isMeta && e.key === ',') {
     e.preventDefault()

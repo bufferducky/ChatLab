@@ -19,6 +19,19 @@ MAX_IMAGE_BYTES = 50 * 1024 * 1024
 RASTER_IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp", "image/gif")
 
 
+def is_video(media):
+    from telethon import types
+
+    return (
+        isinstance(media, types.Document)
+        and media.mime_type in ("video/mp4", "video/webm")
+        and any(isinstance(a, types.DocumentAttributeVideo) for a in media.attributes)
+        and not any(
+            isinstance(a, types.DocumentAttributeSticker) for a in media.attributes
+        )
+    )
+
+
 def image_metadata(message):
     """Retain the received TL media object; no second message RPC is needed."""
     from telethon import types
@@ -27,6 +40,8 @@ def image_metadata(message):
     document = getattr(message, "document", None)
     if isinstance(photo, types.Photo) and photo.sizes:
         return bytes(photo), message.message or ""
+    if is_video(document) and document.size <= MAX_IMAGE_BYTES:
+        return bytes(document), message.message or ""
     # TGS/WebM stickers expose a server-rendered raster thumbnail.
     if (
         isinstance(document, types.Document)
@@ -96,7 +111,7 @@ class TelegramImages:
             ref = json.loads((self.directory / f"{key}.json").read_text())
             if not re.fullmatch(r"[a-f0-9]{64}", ref.get("blob", "")) or not ref.get(
                 "mime", ""
-            ).startswith("image/"):
+            ).startswith(("image/", "video/")):
                 return None
             path = self.directory / f"{ref['blob']}.bin"
             data = path.read_bytes()
@@ -216,6 +231,18 @@ class TelegramImages:
                 messages = [messages]
             results = {}
             for message in messages:
+                if not message or not getattr(message, "date", None):
+                    continue
+                from bridge import convert_message, extract_message_links
+
+                content = convert_message(message)["content"] or ""
+                self.cache.store_links(
+                    sid, message.id, content, extract_message_links(message, content)
+                )
+                results[str(message.id)] = {
+                    "media": b"",
+                    "caption": message.message or "",
+                }
                 if metadata := image_metadata(message):
                     media, caption = metadata
                     results[str(message.id)] = {"media": media, "caption": caption}
@@ -273,11 +300,27 @@ class TelegramImages:
                 )
 
     async def resolve(self, sid, mid, size=None, *, priority=None):
+        if size == "links":
+            self.metadata(
+                sid, mid
+            )  # Validate account and archived message before reading links.
+            if (cached_links := self.cache.links(sid, mid)) is not None:
+                return cached_links
+            await self.fetch_metadata(sid, mid)
+            result = self.cache.links(sid, mid)
+            if result is None:
+                raise KeyError("Message links unavailable")
+            return result
         row = self.metadata(sid, mid)
         if size in ("preview", "original") and (
             cached := self.cached_image(sid, mid, size)
         ):
-            if size == "original" and self.cached_image(sid, mid, "preview") is None:
+            video = cached[4:8] == b"ftyp" or cached[:4] == b"\x1aE\xdf\xa3"
+            if (
+                size == "original"
+                and not video
+                and self.cached_image(sid, mid, "preview") is None
+            ):
                 await self.store_image(
                     sid, mid, row["caption"] if row else "", cached, "original"
                 )
@@ -319,8 +362,10 @@ class TelegramImages:
         from telethon.extensions import BinaryReader
 
         row = self.metadata(sid, mid)
-        if row is None:
+        if row is None or not row["media"]:
             row = await self.fetch_metadata(sid, mid)
+        if not row["media"]:
+            raise KeyError("Image unavailable")
         if size is None:
             return {"images": [{"index": 0}], "caption": row["caption"]}
         self.scheduler.check_cooldown()
