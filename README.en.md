@@ -8,7 +8,7 @@ This is an independently maintained personal project based on [ChatLab](https://
 
 ## Features
 
-- Compact conversation reading with sender grouping, reply navigation and sender-specific message navigation.
+- Compact conversation reading with sender grouping, reply navigation and sender-specific message navigation, plus adjustable reading size and a shared heavier text option for chat messages, topic summaries and AI body text.
 - Telegram previews and originals in a shared cache, foreground download priority, cancellation and server cooldown feedback. QQ images use a bridge to the locally signed-in client.
 - Scheduled incremental topic organization for unprocessed messages from the last 7 days, cross-day progress, evidence links and unread versions, alongside historical daily views. The default window is 09:30–23:40 Asia/Shanghai; the app must remain running with a model configured. Repeated pulls do not repeat summaries.
 - Group highlights with reading actions, source links, model usage and budget status.
@@ -19,6 +19,14 @@ AI features require your own model configuration. Messages remain locally stored
 The **global automatic summary switch** is under Settings → Automation → Auto Sync → Automatic topics. It defaults to on, saves immediately and persists after restarting. Turning it off stops automatic summaries for every conversation and aborts an active automatic request. Collection, message sync, existing topics, manual “Update now” and batch summaries remain available. Conversation switches, schedules and committed checkpoints are preserved; re-enabling resumes incremental processing under each conversation’s settings. Requests already sent to a model may still incur usage.
 
 Automatic topics and “Update now” both use a rolling 7-day window, including newly imported messages within that window. Older original messages and existing topics remain available. Upstream model failures preserve progress for retry. Group/private filters select the pull scope; QQ collection still runs for the whole source. See [topic organization](packages/node-runtime/src/services/topics/README.md) and the [Pull protocol](docs/en/standard/chatlab-pull.md).
+
+## Adjust reading text
+
+1. Open **Settings → General → Appearance**.
+2. Choose **Small**, **Standard** or **Large** under **Reading text size**. Standard uses 14px for chat messages and topic summaries, and 16px for AI body text.
+3. Turn on **Heavier body text** to use medium weight (500) across these content areas; turn it off to return to regular weight. Compare the result in the settings preview or a conversation.
+
+Changes apply immediately, save automatically and persist after restarting. Reading size affects content without scaling menus or toolbars.
 
 ## Install and connect
 
