@@ -33,7 +33,7 @@ pnpm exec tsx integrations/wecom/connect.mts sync
 pnpm exec tsx integrations/wecom/connect.mts verify
 ```
 
-安装包含本分支同步引擎的桌面版本后，在“设置 → 自动化 → 自动同步”可查看“企业微信（本机全部会话）”，暂停/恢复及立即同步。`autoDiscoverSessions=true` 明确表示导入此数据源后续出现的全部群聊和私聊；单独移除订阅会在下次发现时重新加入，停止同步请暂停整个数据源。其它数据源默认不启用自动发现。
+安装包含本分支同步引擎的桌面版本后，在“设置 → 自动化 → 自动同步”可查看“企业微信（本机全部会话）”，暂停/恢复及立即同步。`autoDiscoverSessions=true` 明确表示导入此数据源后续出现的全部群聊和私聊；仅移除订阅而不配置远端 ID 排除项，会在下次发现时重新加入；停止整个源的同步可暂停数据源。其它数据源默认不启用自动发现。
 
 本次本机部署通过 LaunchAgent `io.github.bufferducky.chatlab-wecom` 托管适配服务，登录系统后启动；**2026-11-12 最新配置：服务每轮结束后等待 10 分钟（600 秒），ChatLab 开启时每 10 分钟拉取。** 私有数据在 `~/.local/share/chatlab-wecom/`，包含配置、独立存档和仅含统计的验证报告；凭证、明文及用户聊天不会写入仓库。服务脚本从本仓库运行，移动仓库后须更新 LaunchAgent 路径。
 
@@ -51,6 +51,12 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.bufferducky.ch
 ```
 
 停止服务不会删除数据；不要修改已有源的端口或更换私有存档，否则会改变 ChatLab 会话或增量游标的对应关系。
+
+## 手动立即采集
+
+会话页“立即采集并更新”支持企业微信：ChatLab 探测 `/health` 的 `collect` 能力后，调用带相同 Bearer 鉴权的 `POST /api/v1/collect`，再通过 `GET /api/v1/collect` 等待本轮完成，然后拉取所选会话。
+
+手动请求与定时刷新共享运行状态，已有任务时复用同一轮，不并发发布快照。采集刷新整个本地来源，会话筛选作用于随后拉取阶段。源文件没有变化时可以成功完成且新增 0 条；失败返回安全错误类别，不伪报采集成功。无需停止健康后台服务或启动第二个 `serve`。
 
 ## 同步与数据边界
 
