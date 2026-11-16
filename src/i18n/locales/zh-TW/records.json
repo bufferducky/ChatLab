@@ -221,6 +221,8 @@
     "retryIn": "請求受限，{seconds} 秒後自動重試"
   },
   "video": {
+    "load": "載入影片",
+    "loadDescription": "點擊後才會下載整份影片檔案",
     "player": "影片",
     "loading": "正在載入影片…",
     "loadFailed": "影片載入失敗，請稍後重試",

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { useIntersectionObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { fetchWithAuth, getBaseUrl } from '@/services/utils/http'
 import { useVideoPlaybackStore } from '@/stores/videoPlayback'
@@ -8,7 +7,6 @@ import { useVideoPlaybackStore } from '@/stores/videoPlayback'
 const props = defineProps<{ sessionId: string; messageId: number }>()
 const { t } = useI18n()
 const playback = useVideoPlaybackStore()
-const target = ref<HTMLElement | null>(null)
 const url = ref('')
 const state = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const error = ref('')
@@ -17,7 +15,6 @@ const inlinePlayer = ref<HTMLVideoElement | null>(null)
 const largePlayer = ref<HTMLVideoElement | null>(null)
 let resumeTime = 0
 let controller = new AbortController()
-let visible = false
 
 async function load() {
   if (state.value === 'loading' || state.value === 'ready') return
@@ -74,15 +71,11 @@ watch(largeOpen, (open) => {
     largePlayer.value.pause()
   }
 })
-useIntersectionObserver(target, ([entry]) => {
-  visible = !!entry?.isIntersecting
-  if (visible) void load()
-})
+// Video bytes are fetched only on explicit user action (see the load button in the template).
 watch(
   () => [props.sessionId, props.messageId],
   () => {
     reset()
-    if (visible) void load()
   }
 )
 watch(
@@ -99,7 +92,7 @@ onBeforeUnmount(reset)
 </script>
 
 <template>
-  <div ref="target" class="mb-2 w-80 max-w-full">
+  <div class="mb-2 w-80 max-w-full">
     <video
       v-if="url"
       ref="inlinePlayer"
@@ -128,10 +121,23 @@ onBeforeUnmount(reset)
       class="flex min-h-28 items-center justify-center rounded-lg bg-gray-100 p-3 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400"
       :aria-busy="state === 'loading'"
     >
-      <span v-if="state !== 'error'" role="status">{{ t('records.video.loading') }}</span>
-      <div v-else class="space-y-2 text-center">
+      <span v-if="state === 'loading'" role="status">{{ t('records.video.loading') }}</span>
+      <div v-else-if="state === 'error'" role="alert" class="space-y-2 text-center">
         <p>{{ error }}</p>
         <UButton size="xs" color="neutral" variant="soft" @click="load">{{ t('common.retry') }}</UButton>
+      </div>
+      <div v-else class="space-y-2 text-center">
+        <UButton
+          size="xs"
+          color="neutral"
+          variant="soft"
+          icon="i-heroicons-arrow-down-tray"
+          :aria-label="t('records.video.load')"
+          @click="load"
+        >
+          {{ t('records.video.load') }}
+        </UButton>
+        <p>{{ t('records.video.loadDescription') }}</p>
       </div>
     </div>
     <p v-if="url && error" class="mt-1 text-xs text-gray-500">{{ error }}</p>

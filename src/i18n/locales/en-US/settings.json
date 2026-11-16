@@ -629,6 +629,14 @@
       "enabled": "On: process pending messages from the last 7 days during each conversation’s schedule.",
       "disabled": "Off: automatic summaries stop. Message sync, existing topics and manual summaries remain available.",
       "failed": "Could not load or save automatic summary settings"
+    },
+    "mediaPrefetch": {
+      "title": "Video prefetch",
+      "enable": "Download videos in the background",
+      "description": "When off, videos download only after you press play. When on, the collector pre-downloads each complete video in the background (up to 50 MiB per video), which noticeably increases bandwidth and disk usage.",
+      "enabled": "On: the collector pre-downloads complete videos in the background (up to 50 MiB each), using noticeably more bandwidth.",
+      "disabled": "Off: videos download only when you press play.",
+      "failed": "Could not load or save the video prefetch setting"
     }
   },
   "mcp": {

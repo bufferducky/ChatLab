@@ -1,5 +1,9 @@
 import type { FastifyInstance } from 'fastify'
-import type { AutomationRouteHostContext, AutomationSessionKind } from '../../context/automation'
+import type {
+  AutomationRouteContext,
+  AutomationRouteHostContext,
+  AutomationSessionKind,
+} from '../../context/automation'
 
 function requireAutomation(ctx: AutomationRouteHostContext) {
   return ctx.automation ?? null
@@ -28,6 +32,78 @@ function buildRemoteSessionsUrl(
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+}
+
+interface MediaPolicy {
+  videoPrefetch: boolean
+  supported: boolean
+}
+
+type MediaPolicyProbeResult =
+  | { status: 'supported'; videoPrefetch: boolean }
+  | { status: 'unsupported' }
+  | { status: 'failed'; error: string }
+
+const MEDIA_POLICY_TIMEOUT_MS = 10_000
+const MEDIA_POLICY_UNSUPPORTED_STATUSES = new Set([400, 404, 405, 501])
+
+async function probeMediaPolicy(
+  source: { baseUrl: string; token: string },
+  videoPrefetch?: boolean
+): Promise<MediaPolicyProbeResult> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (source.token) headers.Authorization = `Bearer ${source.token}`
+  const init: RequestInit = { headers, signal: AbortSignal.timeout(MEDIA_POLICY_TIMEOUT_MS) }
+  // Without an explicit value the remote policy is only read; with one it is applied and echoed back.
+  if (videoPrefetch !== undefined) {
+    init.method = 'PUT'
+    headers['Content-Type'] = 'application/json'
+    init.body = JSON.stringify({ videoPrefetch })
+  }
+
+  try {
+    const resp = await fetch(`${normalizeBaseUrl(source.baseUrl)}/media-policy`, init)
+    if (resp.status === 200) {
+      const body = asRecord(await resp.json().catch(() => undefined))
+      if (typeof body?.videoPrefetch === 'boolean') {
+        return { status: 'supported', videoPrefetch: body.videoPrefetch }
+      }
+      return { status: 'failed', error: 'Remote server returned an invalid media policy' }
+    }
+    // A server that does not implement the endpoint is ignored rather than treated as an error.
+    if (MEDIA_POLICY_UNSUPPORTED_STATUSES.has(resp.status)) return { status: 'unsupported' }
+    return { status: 'failed', error: `Remote server returned HTTP ${resp.status}` }
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : 'Failed to reach remote server' }
+  }
+}
+
+async function resolveMediaPolicy(
+  automation: AutomationRouteContext,
+  videoPrefetch?: boolean
+): Promise<{ policy: MediaPolicy } | { error: string }> {
+  const sources = (automation.dsManager.loadAll() as Array<{ baseUrl?: string; token?: string }>).filter(
+    (source) => typeof source?.baseUrl === 'string' && source.baseUrl.trim().length > 0
+  )
+  const results = await Promise.all(
+    sources.map((source) => probeMediaPolicy({ baseUrl: source.baseUrl!, token: source.token ?? '' }, videoPrefetch))
+  )
+
+  const supported = results.some((result) => result.status === 'supported')
+  if (!supported) {
+    // An unreachable source may still implement the endpoint, so report the first failure instead of "unsupported".
+    for (const result of results) {
+      if (result.status === 'failed') return { error: result.error }
+    }
+    return { policy: { videoPrefetch: false, supported: false } }
+  }
+
+  return {
+    policy: {
+      videoPrefetch: results.some((result) => result.status === 'supported' && result.videoPrefetch),
+      supported: true,
+    },
+  }
 }
 
 function parseRemoteSessionsResponse(body: string): {
@@ -227,5 +303,23 @@ export function registerAutomationRoutes(server: FastifyInstance, ctx: Automatio
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : 'Failed to fetch remote sessions' })
     }
+  })
+
+  server.get('/_web/automation/media-policy', async (_request, reply) => {
+    const automation = requireAutomation(ctx)
+    if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
+    const outcome = await resolveMediaPolicy(automation)
+    if ('error' in outcome) return reply.code(502).send({ error: outcome.error })
+    return outcome.policy
+  })
+
+  server.patch<{ Body: { videoPrefetch?: unknown } }>('/_web/automation/media-policy', async (request, reply) => {
+    const automation = requireAutomation(ctx)
+    if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
+    const videoPrefetch = request.body?.videoPrefetch
+    if (typeof videoPrefetch !== 'boolean') return reply.code(400).send({ error: 'Invalid media policy' })
+    const outcome = await resolveMediaPolicy(automation, videoPrefetch)
+    if ('error' in outcome) return reply.code(502).send({ error: outcome.error })
+    return outcome.policy
   })
 }

@@ -83,6 +83,19 @@ class TelegramImages:
         self.wake = asyncio.Event()
         self.collection_idle = asyncio.Event()
         self.collection_idle.set()
+        # Video originals are large, so background prefetch is opt-in and persisted.
+        self.video_prefetch = self._loaded_video_prefetch()
+
+    def _loaded_video_prefetch(self):
+        """Prefer the persisted operator choice; a missing value keeps videos off."""
+        if self.cache is not None:
+            with self.cache.connect() as db:
+                row = db.execute(
+                    "SELECT value FROM state WHERE key='mediaPolicy'"
+                ).fetchone()
+            if row:
+                return json.loads(row[0])["videoPrefetch"] is True
+        return self.config.get("videoPrefetch") is True
 
     @contextlib.contextmanager
     def pause_prefetch(self):
@@ -501,6 +514,23 @@ class TelegramImages:
     def wake_prefetch(self):
         self.wake.set()
 
+    def apply_media_policy(self, policy):
+        """Persist the operator switch, then let the prefetch loop act on it."""
+        if not isinstance(policy, dict) or not isinstance(
+            policy.get("videoPrefetch"), bool
+        ):
+            raise TypeError("Invalid media policy")
+        video_prefetch = policy["videoPrefetch"]
+        with self.cache.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO state VALUES('mediaPolicy',?)",
+                (json.dumps({"videoPrefetch": video_prefetch}),),
+            )
+        if video_prefetch != self.video_prefetch:
+            self.video_prefetch = video_prefetch
+            self.wake_prefetch()
+        return {"videoPrefetch": self.video_prefetch}
+
     async def prefetch_pending(self):
         """Drain committed work only; failed downloads never roll back message checkpoints."""
         async with self.prefetch_gate:
@@ -512,11 +542,15 @@ class TelegramImages:
                     break
                 with self.cache.connect() as db:
                     row = db.execute(
-                        """SELECT * FROM image_metadata
-                        WHERE (preview_done=0 AND next_retry<=?)
-                           OR (original_done=0 AND original_next_retry<=?)
-                        ORDER BY preview_done,rowid DESC LIMIT 1""",
-                        (time.time(), time.time()),
+                        """SELECT m.* FROM image_metadata AS m
+                        LEFT JOIN messages AS msg
+                          ON msg.session_id=m.session_id AND msg.native_id=m.native_id
+                        WHERE ((m.preview_done=0 AND m.next_retry<=?)
+                            OR (m.original_done=0 AND m.original_next_retry<=?))
+                          -- Filter disabled videos in SQL so one row cannot be re-selected forever.
+                          AND (? OR json_extract(msg.payload,'$.type') IS NOT 3)
+                        ORDER BY m.preview_done,m.rowid DESC LIMIT 1""",
+                        (time.time(), time.time(), int(self.video_prefetch)),
                     ).fetchone()
                 if row is None:
                     break

@@ -175,6 +175,8 @@ stateDiagram-v2
 
 继续使用 `image_metadata` 中的媒体对象和原图／预览进度，消息正文、消息 ID、`last_id`、`last_scanned_id` 的语义保持现有实现。
 
+视频原文件的后台预取由持久化媒体策略控制：`state` 表的 `mediaPolicy` 保存 `{"videoPrefetch": true|false}`，缺失时回落到私有 `config.json` 的 `videoPrefetch`，两者都缺失按关闭处理，`state` 优先。关闭时后台待办查询在 SQL 中排除 `payload.type=3` 的视频行，图片、贴纸与其它媒体不变；被排除的行保持待办状态，不进入选中结果，因此不会重复下载同一行。开启后立即唤醒待办队列、按新到旧补齐，关闭即停止。按需播放与开关无关：`GET /api/v1/sessions/<sid>/messages/<mid>/images/0?size=original` 对视频仍按需下载并返回原文件字节。
+
 任务队列与优先级在内存管理；后台待办和重试截止时间仍持久化。服务重启后从待办恢复，已有缓存优先复用。
 
 完成标记代表曾经准备成功，不代表文件永远不会被 30 GiB 容量策略淘汰。每次读取都确认实际缓存可读；淘汰后按阅读需求优先补取，不能循环全量重下已淘汰历史。
@@ -184,8 +186,8 @@ stateDiagram-v2
 | 文件／模块 | 负责的变化 |
 | --- | --- |
 | 新增 `integrations/telegram/media_scheduler.py` | 集中管理任务优先级、合并与提升、订阅者取消、媒体准入、真实冷却和运行时并发配置；避免再叠加彼此独立的 FIFO 队列 |
-| `integrations/telegram/bridge.py` | RPC 分类；历史查询节奏与媒体策略分离；配置获取、SDK 派生客户端接入、取消订阅接口和错误秒数传递 |
-| `integrations/telegram/image_media.py` | 缓存优先；前台与后台意图传入调度器；下载、取图格式和缓存提交保持在本模块 |
+| `integrations/telegram/bridge.py` | RPC 分类；历史查询节奏与媒体策略分离；配置获取、SDK 派生客户端接入、取消订阅接口、`/api/v1/media-policy` 开关和错误秒数传递 |
+| `integrations/telegram/image_media.py` | 缓存优先；前台与后台意图传入调度器；后台待办按媒体策略过滤视频；下载、取图格式和缓存提交保持在本模块 |
 | `packages/node-runtime/src/services/message-images.ts` | 复用缓存和请求合并；正确传递取消订阅及服务端限流信息 |
 | `packages/http-routes/src/routes/web/message-images.ts` | 传递真实重试时间和稳定错误码，处理客户端断开 |
 | `src/components/common/ChatRecord/MessageImages.vue` | 视口内加载、离屏撤销、点击原图优先需求、冷却等待与有限重试 |

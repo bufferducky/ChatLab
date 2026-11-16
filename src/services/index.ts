@@ -58,6 +58,8 @@ export type {
 } from './session-index/types'
 export { useMessageService } from './message/service'
 export type { MessageAdapter, TimeFilter, MessageRecord, PaginatedMessages, SearchResult } from './message/types'
+export { useMediaPolicyService } from './media-policy'
+export type { MediaPolicy } from './media-policy'
 export { useChatTopicsService } from './chat-topics/service'
 export type {
   ChatTopicsAdapter,

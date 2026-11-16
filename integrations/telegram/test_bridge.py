@@ -12,8 +12,9 @@ from unittest.mock import AsyncMock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from bridge import Cache, convert_message, make_client, make_server, refresh
 from telethon import TelegramClient, errors, functions, types
+
+from bridge import Cache, convert_message, make_client, make_server, refresh
 
 
 def payload(mid, stamp=100):
@@ -826,6 +827,64 @@ class ImageProtocolTests(unittest.TestCase):
                 self.assertEqual(limited.exception.code, 429)
                 self.assertEqual(limited.exception.headers["Retry-After"], "37")
                 self.assertEqual(json.load(limited.exception)["retryAfterSeconds"], 37)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(2)
+
+    def test_media_policy_defaults_off_and_a_switch_survives_restart(self):
+        from image_media import TelegramImages
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Cache(directory)
+            images = TelegramImages(cache, SimpleNamespace(), None)
+            server = make_server(
+                cache, {"token": "synthetic-secret", "port": 0}, images
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            headers = {"Authorization": "Bearer synthetic-secret"}
+
+            def request(method="GET", body=None):
+                data = json.dumps(body).encode() if body is not None else None
+                with urlopen(
+                    Request(
+                        base + "/api/v1/media-policy",
+                        method=method,
+                        data=data,
+                        headers=headers,
+                    )
+                ) as response:
+                    self.assertEqual(response.status, 200)
+                    return json.load(response)
+
+            try:
+                self.assertEqual(request(), {"videoPrefetch": False})
+                with self.assertRaises(HTTPError) as unauthorized:
+                    urlopen(
+                        Request(
+                            base + "/api/v1/media-policy",
+                            method="PUT",
+                            data=b'{"videoPrefetch": true}',
+                        )
+                    )
+                self.assertEqual(unauthorized.exception.code, 401)
+                self.assertEqual(
+                    request("PUT", {"videoPrefetch": True}), {"videoPrefetch": True}
+                )
+                self.assertEqual(request(), {"videoPrefetch": True})
+                with self.assertRaises(HTTPError) as invalid:
+                    request("PUT", {"videoPrefetch": "yes"})
+                self.assertEqual(invalid.exception.code, 400)
+                self.assertEqual(
+                    json.load(invalid.exception), {"error": "Invalid media policy"}
+                )
+                self.assertTrue(
+                    TelegramImages(
+                        Cache(directory), SimpleNamespace(), None
+                    ).video_prefetch
+                )
             finally:
                 server.shutdown()
                 server.server_close()

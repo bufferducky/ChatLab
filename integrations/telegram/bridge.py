@@ -745,8 +745,9 @@ async def discover(root, config):
 
 
 async def refresh(root, config, cache, shared_client=None, image_service=None):
-    from image_media import image_metadata
     from telethon import utils
+
+    from image_media import image_metadata
 
     selected = config.get("selectedPeers", [])
     if not selected and not config.get("allDialogs"):
@@ -909,6 +910,23 @@ def make_server(cache, config, images=None, collection=None):
                 return self.reply(400, {"error": "Invalid request ID"})
             return self.reply(200, images.cancel_request(request_id))
 
+        def do_PUT(self):
+            if not hmac.compare_digest(
+                self.headers.get("Authorization", ""), "Bearer " + config["token"]
+            ):
+                return self.reply(401, {"error": "Unauthorized"})
+            if urlsplit(self.path).path != "/api/v1/media-policy":
+                return self.reply(404, {"error": "Not found"})
+            if images is None:
+                return self.reply(501, {"error": "Media policy is not enabled"})
+            try:
+                body = json.loads(
+                    self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                )
+                return self.reply(200, images.apply_media_policy(body))
+            except (ValueError, TypeError):
+                return self.reply(400, {"error": "Invalid media policy"})
+
         def do_GET(self):
             path = urlsplit(self.path)
             if path.path == "/health":
@@ -926,6 +944,10 @@ def make_server(cache, config, images=None, collection=None):
                 if collection is None:
                     return self.reply(501, {"error": "Collect is not enabled"})
                 return self.reply(200, collection.snapshot())
+            if path.path == "/api/v1/media-policy":
+                if images is None:
+                    return self.reply(501, {"error": "Media policy is not enabled"})
+                return self.reply(200, {"videoPrefetch": images.video_prefetch})
             if not cache.status()["ready"]:
                 return self.reply(
                     503, {"error": "Initial collection pending; inspect /health"}

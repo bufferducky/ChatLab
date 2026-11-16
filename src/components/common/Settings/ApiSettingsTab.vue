@@ -9,6 +9,7 @@ import DataSourceAddModal from './API/DataSourceAddModal.vue'
 import DataSourceEditModal from './API/DataSourceEditModal.vue'
 import McpSettingsTab from './McpSettingsTab.vue'
 import TopicAutomationSection from './AI/TopicAutomationSection.vue'
+import MediaPrefetchSection from './API/MediaPrefetchSection.vue'
 
 const { t, locale } = useI18n()
 const store = useApiServerStore()
@@ -268,6 +269,7 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
         <!-- ==================== Auto Sync Sub-Tab ==================== -->
         <template v-if="activeSubTab === 'sync'">
           <TopicAutomationSection />
+          <MediaPrefetchSection />
           <div>
             <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
               <UIcon name="i-heroicons-cloud-arrow-down" class="h-4 w-4 text-indigo-500" />

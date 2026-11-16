@@ -6,9 +6,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from telethon import TelegramClient, errors, functions
+
 from bridge import Cache, make_client
 from media_scheduler import MediaRateLimited, MediaScheduler, media_job
-from telethon import TelegramClient, errors, functions
 
 
 async def turns():

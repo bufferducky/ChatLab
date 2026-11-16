@@ -5,9 +5,10 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 
+from telethon import types
+
 from bridge import Cache, refresh
 from image_media import TelegramImages, TelegramWorker
-from telethon import types
 
 
 def synthetic_photo(mid=9):
@@ -25,6 +26,31 @@ def synthetic_photo(mid=9):
                 date=datetime.now(UTC),
                 dc_id=1,
                 sizes=[types.PhotoSize(type="m", w=320, h=240, size=20)],
+            )
+        ),
+    )
+
+
+def synthetic_video(mid=99):
+    return types.Message(
+        id=mid,
+        peer_id=types.PeerChat(2),
+        date=datetime.now(UTC),
+        message="video caption",
+        media=types.MessageMediaDocument(
+            document=types.Document(
+                id=12,
+                access_hash=2,
+                file_reference=b"reference",
+                date=datetime.now(UTC),
+                mime_type="video/mp4",
+                size=1024,
+                dc_id=1,
+                attributes=[
+                    types.DocumentAttributeVideo(
+                        duration=2, w=320, h=240, supports_streaming=True
+                    )
+                ],
             )
         ),
     )
@@ -304,9 +330,10 @@ class ImageTests(unittest.TestCase):
             asyncio.run(run())
 
     def test_progressive_thumbnail_uses_the_installed_telethon_download_contract(self):
+        from telethon import TelegramClient
+
         from bridge import convert_message
         from image_media import image_metadata
-        from telethon import TelegramClient
 
         with tempfile.TemporaryDirectory() as root:
             cache = Cache(root)
@@ -472,9 +499,10 @@ class ImageTests(unittest.TestCase):
     def test_expired_saved_media_refreshes_reference_for_original_prefetch(self):
         from unittest.mock import AsyncMock
 
+        from telethon import errors
+
         from bridge import convert_message
         from image_media import image_metadata
-        from telethon import errors
 
         with tempfile.TemporaryDirectory() as root:
             cache = Cache(root)
@@ -750,28 +778,7 @@ class VideoTests(unittest.TestCase):
         from bridge import convert_message
         from image_media import image_metadata
 
-        message = types.Message(
-            id=99,
-            peer_id=types.PeerChat(2),
-            date=datetime.now(UTC),
-            message="video caption",
-            media=types.MessageMediaDocument(
-                document=types.Document(
-                    id=12,
-                    access_hash=2,
-                    file_reference=b"reference",
-                    date=datetime.now(UTC),
-                    mime_type="video/mp4",
-                    size=1024,
-                    dc_id=1,
-                    attributes=[
-                        types.DocumentAttributeVideo(
-                            duration=2, w=320, h=240, supports_streaming=True
-                        )
-                    ],
-                )
-            ),
-        )
+        message = synthetic_video()
         metadata = image_metadata(message)
         self.assertIsNotNone(metadata)
         with tempfile.TemporaryDirectory() as root:
@@ -807,6 +814,79 @@ class VideoTests(unittest.TestCase):
             asyncio.run(run())
         message.document.size = 51 * 1024 * 1024
         self.assertIsNone(image_metadata(message))
+
+    def test_video_prefetch_stays_off_until_the_persisted_policy_enables_it(self):
+        """A queued video must not download until the operator turns prefetch on."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from bridge import convert_message
+        from image_media import image_metadata
+
+        with tempfile.TemporaryDirectory() as root:
+            cache = Cache(root)
+            cache.bind_account(1)
+            sid = cache.session(1, -2, "Video", "group")
+            video, photo = synthetic_video(), synthetic_photo()
+            cache.ingest(
+                sid,
+                [convert_message(video), convert_message(photo)],
+                images=[
+                    ("99", *image_metadata(video)),
+                    ("9", *image_metadata(photo)),
+                ],
+            )
+
+            def originals_done():
+                with cache.connect() as db:
+                    return {
+                        row["native_id"]: row["original_done"]
+                        for row in db.execute(
+                            "SELECT native_id,original_done FROM image_metadata"
+                        )
+                    }
+
+            async def run():
+                client = SimpleNamespace(
+                    is_connected=lambda: True,
+                    download_media=AsyncMock(return_value=b"original"),
+                )
+                loop = asyncio.get_running_loop()
+                images = TelegramImages(cache, client, loop)
+                images.store_image = AsyncMock()
+                self.assertFalse(images.video_prefetch)
+                # Returns instead of re-selecting the disabled video forever.
+                await asyncio.wait_for(images.prefetch_pending(), 1)
+                self.assertEqual(client.download_media.await_count, 1)
+                self.assertEqual(originals_done(), {99: 0, 9: 1})
+
+                self.assertEqual(
+                    images.apply_media_policy({"videoPrefetch": True}),
+                    {"videoPrefetch": True},
+                )
+                self.assertTrue(images.wake.is_set())
+                await asyncio.wait_for(images.prefetch_pending(), 1)
+                self.assertEqual(client.download_media.await_count, 2)
+                self.assertEqual(originals_done(), {99: 1, 9: 1})
+
+                # Restarts read the persisted switch, which wins over the config file.
+                restarted = TelegramImages(
+                    cache, client, loop, {"videoPrefetch": False}
+                )
+                self.assertTrue(restarted.video_prefetch)
+                self.assertEqual(
+                    restarted.apply_media_policy({"videoPrefetch": False}),
+                    {"videoPrefetch": False},
+                )
+                self.assertFalse(
+                    TelegramImages(
+                        cache, client, loop, {"videoPrefetch": True}
+                    ).video_prefetch
+                )
+                with self.assertRaises(TypeError):
+                    restarted.apply_media_policy({"videoPrefetch": "yes"})
+
+            asyncio.run(run())
 
 
 class TextLinkTests(unittest.IsolatedAsyncioTestCase):

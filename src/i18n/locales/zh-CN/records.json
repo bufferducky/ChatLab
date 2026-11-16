@@ -221,6 +221,8 @@
     "retryIn": "请求受限，{seconds} 秒后自动重试"
   },
   "video": {
+    "load": "加载视频",
+    "loadDescription": "点击后才会下载整份视频文件",
     "player": "视频",
     "loading": "正在加载视频…",
     "loadFailed": "视频加载失败，请稍后重试",

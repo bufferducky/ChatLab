@@ -221,6 +221,8 @@
     "retryIn": "Rate limited. Retrying in {seconds} seconds."
   },
   "video": {
+    "load": "Load video",
+    "loadDescription": "The full video file is downloaded after you click",
     "player": "Video",
     "loading": "Loading video…",
     "loadFailed": "Could not load video. Please retry.",
