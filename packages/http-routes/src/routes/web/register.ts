@@ -19,6 +19,7 @@ import { registerNavigationLayoutRoutes } from './navigation-layout'
 import { registerMergeRoutes } from './merge'
 import { registerNlpRoutes } from './nlp'
 import { registerPeopleRelationshipsRoutes } from './people-relationships'
+import { registerPriceWatchRoutes } from './price-watch'
 import { registerPreferencesRoutes } from './preferences'
 import { registerSessionIndexRoutes } from './session-index'
 import { registerSessionRoutes } from './sessions'
@@ -60,6 +61,7 @@ export function registerWebRoutes(server: FastifyInstance, ctx: WebRoutesContext
   registerAiRoutes(server, resolvedCtx, options)
   registerMergeRoutes(server, resolvedCtx)
   registerCacheRoutes(server, resolvedCtx)
+  registerPriceWatchRoutes(server, resolvedCtx)
   registerTelemetryRoutes(server, resolvedCtx)
   registerLogRoutes(server)
 }

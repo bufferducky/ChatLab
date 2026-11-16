@@ -13,6 +13,7 @@ This is an independently maintained personal project based on [ChatLab](https://
 - Blue, clickable Telegram title/text/username links, including on-demand metadata recovery for archived messages. Videos initially play muted; sound preferences persist per conversation and carry across inline and large players. Opening another video pauses the previous player.
 - Scheduled incremental topic organization for unprocessed messages from the last 7 days, cross-day progress, evidence links and unread versions, alongside historical daily views. The default window is 09:30–23:40 Asia/Shanghai; the app must remain running with a model configured. Repeated pulls do not repeat summaries.
 - Group highlights with reading actions, source links, model usage and budget status.
+- Price watch from the sidebar tag icon: match newly imported group messages by keywords, exclusions and a price cap, notify Webhook or Telegram channels, inspect hits, and backfill historical prices without notifications. Price extraction does not use an AI model; latency depends on collection and pull schedules.
 - Separate local collectors with authenticated Pull APIs, stable message IDs and resumable checkpoints. A “Collect and update now” button follows AI Chat on conversation pages; QQ, WeCom and Telegram all support collection before pulling the selected conversation. Settings → Automation manages source/type scopes. Failures, timeouts and pulls of existing data are distinguished.
 
 AI features require your own model configuration. Messages remain locally stored; using an external model sends the relevant content to your selected provider.
@@ -20,6 +21,18 @@ AI features require your own model configuration. Messages remain locally stored
 The **global automatic summary switch** is under Settings → Automation → Auto Sync → Automatic topics. It defaults to on, saves immediately and persists after restarting. Turning it off stops automatic summaries for every conversation and aborts an active automatic request. Collection, message sync, existing topics, manual “Update now” and batch summaries remain available. Conversation switches, schedules and committed checkpoints are preserved; re-enabling resumes incremental processing under each conversation’s settings. Requests already sent to a model may still incur usage.
 
 Automatic topics and “Update now” both use a rolling 7-day window, including newly imported messages within that window. Older original messages and existing topics remain available. Manual topic updates take priority over automatic runs while retaining committed batches. Upstream model failures show their reason and preserve progress for retry. Conversation/type filters select the pull scope; collection runs for the whole source. See [topic organization](packages/node-runtime/src/services/topics/README.md) and the [Pull protocol](docs/en/standard/chatlab-pull.md).
+
+Topic processing reacquires the current database connection after each model response, allowing results to be saved even if another feature closed or replaced the connection while the model was running.
+
+## Use price watch
+
+Open the sidebar tag icon in Desktop or CLI Web (not Web WASM). Create a Webhook or Telegram notification channel, then save a rule with imported conversations, keywords, a price cap, exclusions and channels. Matching notifications include the conversation name, price and source message, so choose the destination accordingly.
+
+New rules watch forward from the latest imported message. Further imports trigger scans; startup checks saved rules for backlog. **Scan now** processes messages after the checkpoint. **Backfill** builds a baseline from the last 30 days without sending historical deals. The hit list shows sent, failed and suppressed hits and allows manual resend.
+
+Each conversation scan sends notifications for at most five hits. Remaining hits stay visible as suppressed. The default cooldown is 12 hours for the same rule, product fingerprint and similar price. Text fingerprints are not semantic product or variant matching. Desktop or CLI Web must stay running; collection schedules, network failures and backlog affect latency.
+
+Rules, channels and derived history live in `price-watch/price-watch.db` under the user data directory, separately from chat databases. Channel credentials must remain private. A source change only becomes available in the installed app after rebuilding and installing it. See the [price-watch module guide](packages/node-runtime/src/services/price-watch/README.md) for API and storage details.
 
 ## Adjust reading text
 

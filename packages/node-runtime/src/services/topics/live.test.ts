@@ -167,6 +167,7 @@ function harness(t: TestContext) {
     },
     root,
     paths,
+    manager,
     time(value: string) {
       clock = Date.parse(value)
     },
@@ -205,6 +206,49 @@ async function settle(service: ReturnType<typeof createChatTopicService>, status
   }
   assert.fail(`Run did not reach ${status}`)
 }
+
+for (const replacement of ['closed', 'promoted to writable'] as const) {
+  test(`a live update saves its model result when the shared connection is ${replacement} while awaiting it`, async (t) => {
+    const h = harness(t)
+    h.time('2026-11-13T10:00:00+08:00')
+    h.insert(1)
+    h.afterNextCall(() => {
+      if (replacement === 'closed') h.manager.close('group')
+      else h.manager.openWritable('group')
+    })
+    h.service.noteSync('group')
+
+    const run = await settle(h.service)
+    const feed = h.service.getFeed('group')
+    assert.equal(run.modelCalls, 1)
+    assert.equal(h.calls, 1)
+    assert.equal(feed.pendingMessages, 0)
+    assert.deepEqual(feed.topics[0]!.messageIds, [1])
+  })
+}
+
+test('a multi-block live update continues after the shared database closes during every model request', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  for (let id = 1; id <= 241; id += 1) h.insert(id)
+  const closeDuringModel = () => {
+    h.manager.close('group')
+    h.afterNextCall(closeDuringModel)
+  }
+  h.afterNextCall(closeDuringModel)
+  h.service.noteSync('group')
+
+  const run = await settle(h.service)
+  const feed = h.service.getFeed('group')
+  assert.ok(run.completedBlocks > 1)
+  assert.equal(run.completedBlocks, run.totalBlocks)
+  assert.equal(h.calls, run.totalBlocks)
+  assert.equal(feed.pendingMessages, 0)
+  assert.deepEqual(
+    feed.topics[0]!.messageIds,
+    Array.from({ length: 241 }, (_, index) => index + 1)
+  )
+})
 
 test('automatic summaries start at 09:30 and stop at 23:40 in the configured timezone', () => {
   for (const [time, expected] of [

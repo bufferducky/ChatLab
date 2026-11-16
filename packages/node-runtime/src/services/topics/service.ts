@@ -607,9 +607,8 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     signal: AbortSignal
   ): Promise<ChatTopicRun> {
     let run = initialRun
-    const db = deps.runtime.ensureReadonly(run.sessionId)
     const state = store.getLiveSession(run.sessionId)!
-    const messages = loadLiveTopicMessages(db, state, now())
+    const messages = loadLiveTopicMessages(deps.runtime.ensureReadonly(run.sessionId), state, now())
     const blocks = chunkTopicMessages(messages)
     run = updateRun(run, { totalBlocks: blocks.length, completedBlocks: 0 })
     for (const block of blocks) {
@@ -617,7 +616,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       const settings = store.getLiveSession(run.sessionId)!.settings
       const candidates = selectLiveTopicCandidates(store.getLiveTopics(run.sessionId), block.messages)
       const prompts = buildLiveTopicPrompt({
-        db,
+        db: deps.runtime.ensureReadonly(run.sessionId),
         sessionId: run.sessionId,
         settings,
         candidates,
@@ -636,7 +635,8 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
             settings,
             candidates,
             block,
-            db,
+            // Other services may close or replace the shared connection while awaiting the model.
+            db: deps.runtime.ensureReadonly(run.sessionId),
             now: now(),
           }),
         `chat-topics:${run.sessionId}:continuous`

@@ -534,6 +534,14 @@ function getAvatarColorClass(session: AnalysisSession, isActive: boolean) {
           @click="router.push({ name: 'hotspots' })"
         />
 
+        <SidebarButton
+          v-if="props.backendFeatures"
+          icon="i-lucide-tag"
+          :title="t('priceWatch.title')"
+          :active="route.name === 'price-watch'"
+          @click="router.push({ name: 'price-watch' })"
+        />
+
         <template v-if="showInsightNavigation">
           <SidebarButton
             v-for="item in resolvedPrimaryNavigation"

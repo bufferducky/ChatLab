@@ -1,0 +1,62 @@
+{
+  "title": "価格ウォッチ",
+  "subtitle": "グループ、キーワード、価格上限を設定し、条件に合う情報を Webhook や Telegram で受け取れます。通知のタイミングは収集・取り込み間隔によって変わります。継続的なセール向けで、タイムセールには向きません。",
+  "tabs": {
+    "rules": "ルール",
+    "hits": "一致履歴",
+    "channels": "通知チャンネル"
+  },
+  "newRule": "ルールを作成",
+  "newChannel": "チャンネルを作成",
+  "editRule": "ルールを編集",
+  "fields": {
+    "name": "Rule name",
+    "keywords": "Keywords (space separated, any match)",
+    "excludeKeywords": "Exclude words (space separated)",
+    "maxPrice": "Price ceiling",
+    "sessions": "Watched groups",
+    "channels": "Channels",
+    "channelName": "Channel name",
+    "channelType": "Channel type",
+    "webhookUrl": "Webhook URL",
+    "botToken": "Bot token",
+    "chatId": "Chat ID"
+  },
+  "placeholders": {
+    "name": "e.g. GPU deals",
+    "keywords": "e.g. 4070 4070S",
+    "excludeKeywords": "e.g. buying selling wanted used",
+    "maxPrice": "e.g. 3999"
+  },
+  "channelType": {
+    "webhook": "Generic webhook",
+    "telegram": "Telegram bot"
+  },
+  "save": "保存",
+  "cancel": "キャンセル",
+  "edit": "編集",
+  "scan": "今すぐスキャン",
+  "backfill": "基準値を再構築",
+  "delete": "削除",
+  "resend": "再送",
+  "enabled": "有効",
+  "disabled": "無効",
+  "ruleSummary": "Keywords: {keywords} · Ceiling: {price}",
+  "ruleSessions": "Watching {count} groups",
+  "hitSamples": "{count} historical samples",
+  "hitStatus": {
+    "pending": "Pending",
+    "sent": "Delivered",
+    "failed": "Failed",
+    "suppressed": "Collapsed"
+  },
+  "emptyRules": "ルールがまだありません。",
+  "emptyHits": "一致履歴はまだありません。",
+  "emptyChannels": "通知チャンネルがまだありません。",
+  "noChannels": "チャンネルなし",
+  "saved": "保存しました",
+  "scanDone": "スキャン完了、{hits} 件一致",
+  "backfillDone": "再構築完了、{count} 件の価格を記録",
+  "confirmDeleteRule": "ルール「{name}」を削除しますか？",
+  "confirmDeleteChannel": "チャンネル「{name}」を削除しますか？"
+}

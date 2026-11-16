@@ -1,0 +1,62 @@
+{
+  "title": "好价监控",
+  "subtitle": "选群、设关键词和价格，命中后推送到 Webhook 或 Telegram。通知时效取决于消息采集和拉取频率，适合持续的优惠，不适合抢秒杀。",
+  "tabs": {
+    "rules": "规则",
+    "hits": "命中记录",
+    "channels": "通知通道"
+  },
+  "newRule": "新建规则",
+  "newChannel": "新建通道",
+  "editRule": "编辑规则",
+  "fields": {
+    "name": "规则名称",
+    "keywords": "关键词（空格分隔，任一命中）",
+    "excludeKeywords": "排除词（空格分隔，命中即忽略）",
+    "maxPrice": "价格上限（元）",
+    "sessions": "监控群聊",
+    "channels": "通知通道",
+    "channelName": "通道名称",
+    "channelType": "通道类型",
+    "webhookUrl": "Webhook 地址",
+    "botToken": "Bot Token",
+    "chatId": "Chat ID"
+  },
+  "placeholders": {
+    "name": "例如：显卡好价",
+    "keywords": "例如：4070 4070S",
+    "excludeKeywords": "例如：收 出 求 二手",
+    "maxPrice": "例如：3999"
+  },
+  "channelType": {
+    "webhook": "通用 Webhook",
+    "telegram": "Telegram Bot"
+  },
+  "save": "保存",
+  "cancel": "取消",
+  "edit": "编辑",
+  "scan": "立即扫描",
+  "backfill": "回扫建基线",
+  "delete": "删除",
+  "resend": "重投",
+  "enabled": "已启用",
+  "disabled": "已停用",
+  "ruleSummary": "关键词：{keywords} · 价格上限：{price}",
+  "ruleSessions": "监控 {count} 个群",
+  "hitSamples": "{count} 条历史样本",
+  "hitStatus": {
+    "pending": "待投递",
+    "sent": "已投递",
+    "failed": "投递失败",
+    "suppressed": "已折叠"
+  },
+  "emptyRules": "还没有规则，先建一条试试。",
+  "emptyHits": "还没有命中记录。",
+  "emptyChannels": "还没有通知通道，先加一个才能收到通知。",
+  "noChannels": "暂无通道",
+  "saved": "已保存",
+  "scanDone": "扫描完成，命中 {hits} 条",
+  "backfillDone": "回扫完成，写入 {count} 条历史价格",
+  "confirmDeleteRule": "确定删除规则「{name}」吗？",
+  "confirmDeleteChannel": "确定删除通道「{name}」吗？"
+}

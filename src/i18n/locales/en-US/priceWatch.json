@@ -1,0 +1,62 @@
+{
+  "title": "Price Watch",
+  "subtitle": "Pick groups, keywords and a price cap, and receive matching deals through Webhook or Telegram. Notification timing depends on collection and pull schedules; use it for ongoing deals rather than flash sales.",
+  "tabs": {
+    "rules": "Rules",
+    "hits": "Matches",
+    "channels": "Channels"
+  },
+  "newRule": "New rule",
+  "newChannel": "New channel",
+  "editRule": "Edit rule",
+  "fields": {
+    "name": "Rule name",
+    "keywords": "Keywords (space separated, any match)",
+    "excludeKeywords": "Exclude words (space separated)",
+    "maxPrice": "Price ceiling",
+    "sessions": "Watched groups",
+    "channels": "Channels",
+    "channelName": "Channel name",
+    "channelType": "Channel type",
+    "webhookUrl": "Webhook URL",
+    "botToken": "Bot token",
+    "chatId": "Chat ID"
+  },
+  "placeholders": {
+    "name": "e.g. GPU deals",
+    "keywords": "e.g. 4070 4070S",
+    "excludeKeywords": "e.g. buying selling wanted used",
+    "maxPrice": "e.g. 3999"
+  },
+  "channelType": {
+    "webhook": "Generic webhook",
+    "telegram": "Telegram bot"
+  },
+  "save": "Save",
+  "cancel": "Cancel",
+  "edit": "Edit",
+  "scan": "Scan now",
+  "backfill": "Backfill baseline",
+  "delete": "Delete",
+  "resend": "Resend",
+  "enabled": "Enabled",
+  "disabled": "Disabled",
+  "ruleSummary": "Keywords: {keywords} · Ceiling: {price}",
+  "ruleSessions": "Watching {count} groups",
+  "hitSamples": "{count} historical samples",
+  "hitStatus": {
+    "pending": "Pending",
+    "sent": "Delivered",
+    "failed": "Failed",
+    "suppressed": "Collapsed"
+  },
+  "emptyRules": "No rules yet. Create one to start.",
+  "emptyHits": "No matches yet.",
+  "emptyChannels": "No channels yet. Add one to receive notices.",
+  "noChannels": "No channels",
+  "saved": "Saved",
+  "scanDone": "Scan finished, {hits} matches",
+  "backfillDone": "Backfill finished, {count} price records written",
+  "confirmDeleteRule": "Delete rule \"{name}\"?",
+  "confirmDeleteChannel": "Delete channel \"{name}\"?"
+}

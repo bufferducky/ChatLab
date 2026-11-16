@@ -17,9 +17,11 @@ import insight from './insight.json'
 import browser from './browser.json'
 
 import hotspots from './hotspots.json'
+import priceWatch from './priceWatch.json'
 
 export default {
   hotspots,
+  priceWatch,
   common,
   layout,
   settings,

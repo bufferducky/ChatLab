@@ -41,6 +41,11 @@ export function createAppRoutes(insightRuntime: InsightPluginRuntime = desktopCl
       component: () => import('@/pages/hotspots/index.vue'),
     },
     {
+      path: '/price-watch',
+      name: 'price-watch',
+      component: () => import('@/pages/price-watch/index.vue'),
+    },
+    {
       path: '/ai-chat',
       name: 'global-ai',
       component: () => import('@/pages/global-ai/index.vue'),

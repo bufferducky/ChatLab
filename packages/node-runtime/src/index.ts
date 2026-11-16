@@ -601,3 +601,16 @@ export type {
 } from './services'
 
 export { createHotspotService, type HotspotService } from './services/hotspots/service'
+export { createPriceWatchService, type PriceWatchService, type PriceWatchMessage } from './services/price-watch/service'
+export { parsePrice, normalizePriceText } from './services/price-watch/parser'
+export { buildFingerprint } from './services/price-watch/fingerprint'
+export { deliverToChannel, renderTelegramText, type PriceHitMessage } from './services/price-watch/notifier'
+export {
+  openPriceWatchStore,
+  type PriceChannel,
+  type PriceChannelType,
+  type PriceHit,
+  type PriceHitStatus,
+  type PriceRule,
+  type PriceWatchStore,
+} from './services/price-watch/store'
