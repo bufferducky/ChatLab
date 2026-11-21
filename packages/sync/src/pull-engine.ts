@@ -63,6 +63,7 @@ export function parseSyncFromFile(filePath: string): SyncMeta | null {
               nextSince: obj.nextSince,
               nextOffset: obj.nextOffset,
               watermark: obj.watermark,
+              emptyIsFinal: obj.emptyIsFinal,
             }
           }
         } catch {
@@ -76,7 +77,13 @@ export function parseSyncFromFile(filePath: string): SyncMeta | null {
     const parsed = JSON.parse(raw)
     if (parsed.sync && typeof parsed.sync === 'object') {
       const s = parsed.sync
-      return { hasMore: !!s.hasMore, nextSince: s.nextSince, nextOffset: s.nextOffset, watermark: s.watermark }
+      return {
+        hasMore: !!s.hasMore,
+        nextSince: s.nextSince,
+        nextOffset: s.nextOffset,
+        watermark: s.watermark,
+        emptyIsFinal: s.emptyIsFinal,
+      }
     }
     return null
   } catch {
@@ -451,13 +458,13 @@ export class PullEngine {
           this.logger.info(`[Pull] "${sess.name}" page ${pageCount}: fetched ${stat.size} bytes`)
 
           const sync0 = parseSyncFromFile(tempFile)
-          if (stat.size < 1024) {
+          if (stat.size < 1024 || sync0?.emptyIsFinal === true) {
             if (!fileContainsMessages(tempFile) && sync0?.hasMore === false) {
               cleanupTempFile(tempFile)
               if (sync0?.nextSince !== undefined) nextPullSince = Math.max(nextPullSince, sync0.nextSince)
               // Empty incremental responses are normal. Only initial preparation
               // needs retries; sleeping per idle chat makes large sources unusable.
-              if (since > 0 && sess.targetSessionId) break
+              if (sync0.emptyIsFinal === true || (since > 0 && sess.targetSessionId)) break
               const retryDelays = [2000, 3000, 5000]
               let retrySuccess = false
               let retryHasMore = false
@@ -474,10 +481,15 @@ export class PullEngine {
                 const retryStat = fs.statSync(retryFile)
                 this.logger.info(`[Pull] "${sess.name}" retry ${ri + 1}: fetched ${retryStat.size} bytes`)
                 const retrySync = parseSyncFromFile(retryFile)
-                if (retryStat.size < 1024 && !fileContainsMessages(retryFile) && retrySync?.hasMore === false) {
+                if (
+                  retrySync?.hasMore === false &&
+                  (retryStat.size < 1024 || retrySync.emptyIsFinal === true) &&
+                  !fileContainsMessages(retryFile)
+                ) {
                   // 空 retry 页也可能只返回服务端 watermark，跳过导入前仍要推进保存游标。
                   if (retrySync.nextSince !== undefined) nextPullSince = Math.max(nextPullSince, retrySync.nextSince)
                   cleanupTempFile(retryFile)
+                  if (retrySync.emptyIsFinal === true) break
                   continue
                 }
                 const retryMaxTs = getMaxMessageTimestampFromFile(retryFile)

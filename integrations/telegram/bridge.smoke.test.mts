@@ -23,6 +23,8 @@ sys.path.insert(0,sys.argv[1])
 from bridge import Cache,make_server,private_json
 c=Cache(sys.argv[2]); c.bind_account(1)
 sid=c.session(1,-2,'Synthetic Telegram group','group')
+empty=c.session(1,-3,'Synthetic empty group','group')
+c.finish_session(empty)
 def payload(mid,stamp=100):
  return {'platformMessageId':str(mid),'sender':'42','accountName':'Alice','timestamp':stamp,'type':0,'content':'same text'}
 c.ingest(sid,[payload(1),payload(2),{**payload(3),'replyToMessageId':'1'}]); c.finish()
@@ -76,9 +78,19 @@ server.serve_forever()
     pullLimit: 1,
     autoDiscoverSessions: true,
   })
+  const [emptySession] = sources.addSessions(source.id, [
+    { name: 'Synthetic empty group', remoteSessionId: 'telegram:1:-3' },
+  ])
+  const fetcher = new NodeFetcher()
+  const emptyRequests: number[] = []
+  const fetchToTempFile = fetcher.fetchToTempFile.bind(fetcher)
+  fetcher.fetchToTempFile = (...args) => {
+    if (args[1] === emptySession.remoteSessionId) emptyRequests.push(args[3]?.since ?? 0)
+    return fetchToTempFile(...args)
+  }
   const engine = new PullEngine({
     dsManager: sources,
-    fetcher: new NodeFetcher(),
+    fetcher,
     importer: new DirectImporter(manager),
     notifier: {
       onSessionListChanged() {
@@ -90,7 +102,9 @@ server.serve_forever()
     },
   })
   assert.equal((await engine.triggerPull(source.id)).success, true)
-  const session = sources.get(source.id)!.sessions[0]
+  assert.deepEqual(emptyRequests, [0])
+  assert.equal(sources.get(source.id)!.sessions.find((session) => session.id === emptySession.id)?.targetSessionId, '')
+  const session = sources.get(source.id)!.sessions.find((session) => session.id !== emptySession.id)!
   const database = manager.openRawSessionDatabase(session.targetSessionId, { readonly: true })
   try {
     const count = () => (database.prepare('SELECT COUNT(*) AS n FROM message').get() as { n: number }).n
@@ -105,7 +119,10 @@ server.serve_forever()
 import sys
 sys.path.insert(0,sys.argv[1])
 from bridge import Cache
-c=Cache(sys.argv[2]);c.ingest('telegram:1:-2',[{'platformMessageId':'4','sender':'42','accountName':'Alice','timestamp':1,'type':0,'content':'late history'}]);c.finish()
+c=Cache(sys.argv[2])
+c.ingest('telegram:1:-2',[{'platformMessageId':'4','sender':'42','accountName':'Alice','timestamp':1,'type':0,'content':'late history'}])
+c.ingest('telegram:1:-3',[{'platformMessageId':'1','sender':'42','accountName':'Alice','timestamp':101,'type':0,'content':'first message'}])
+c.finish()
 `,
         integration,
         sourceRoot,
@@ -115,6 +132,16 @@ c=Cache(sys.argv[2]);c.ingest('telegram:1:-2',[{'platformMessageId':'4','sender'
     assert.equal(added.status, 0, added.stderr)
     assert.equal((await engine.triggerPull(source.id)).success, true)
     assert.equal(count(), 4)
+    const populatedSession = sources.get(source.id)!.sessions.find((session) => session.id === emptySession.id)
+    assert.ok(populatedSession?.targetSessionId)
+    const populatedDb = manager.openRawSessionDatabase(populatedSession.targetSessionId, { readonly: true })
+    try {
+      assert.deepEqual(populatedDb.prepare('SELECT platform_message_id, content FROM message').all(), [
+        { platform_message_id: '1', content: 'first message' },
+      ])
+    } finally {
+      populatedDb.close()
+    }
   } finally {
     database.close()
   }

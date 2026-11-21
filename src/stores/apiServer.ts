@@ -56,6 +56,7 @@ export interface DataSource {
     collector?: {
       lastRefresh: number
       state: 'idle' | 'running' | 'done' | 'failed' | 'busy' | 'unavailable'
+      fresh?: boolean
     }
     lastSuccessfulPullAt: number
     pendingSessionIds: string[]

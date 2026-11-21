@@ -56,19 +56,21 @@ async function readCollectorHealth(url: URL, token: string): Promise<CollectorHe
   const body = (await response.json()) as {
     capabilities?: unknown
     lastRefresh?: unknown
+    fresh?: unknown
     refresh?: { state?: string }
   }
   if (!Array.isArray(body.capabilities) || !body.capabilities.includes('collect')) return
   const state = body.refresh?.state
   const lastRefresh = typeof body.lastRefresh === 'number' && Number.isFinite(body.lastRefresh) ? body.lastRefresh : 0
+  const fresh = typeof body.fresh === 'boolean' ? body.fresh : undefined
   switch (state) {
     case 'running':
     case 'done':
     case 'failed':
     case 'busy':
-      return { lastRefresh, state }
+      return { lastRefresh, state, fresh }
     default:
-      return { lastRefresh, state: 'idle' }
+      return { lastRefresh, state: 'idle', fresh }
   }
 }
 

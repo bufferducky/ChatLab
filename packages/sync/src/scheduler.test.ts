@@ -5,7 +5,7 @@ import path from 'node:path'
 import test, { type TestContext } from 'node:test'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { DataSourceManager } from './data-source-manager'
-import { initScheduler, reloadTimer, stopAllTimers } from './scheduler'
+import { getSourceSyncStatus, initScheduler, reloadTimer, stopAllTimers } from './scheduler'
 import type { PullEngine } from './pull-engine'
 import type { DataSource } from './types'
 
@@ -22,7 +22,8 @@ function createFixture(t: TestContext, baseUrl = 'https://example.test') {
   const pullEngine = {
     startImportRetries: () => {},
     stopImportRetries: () => {},
-    async pullAllSessions(ds: DataSource) {
+    getPendingImportSessionIds: (_sourceId: string): string[] => [],
+    async pullAllSessions(ds: DataSource): Promise<boolean> {
       pulls.push(ds.id)
       return true
     },
@@ -88,4 +89,26 @@ test('a local collector refresh triggers a pull ahead of the deadline and an out
   t.mock.timers.tick(30 * 60_000)
   await nextTurn()
   assert.deepEqual(pulls, [source.id, source.id, source.id])
+})
+
+test('sync status reports an overdue collection until the bridge reports recovery', async (t) => {
+  const { source, dsManager, pullEngine } = createFixture(t, 'http://127.0.0.1:5036')
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
+  let fresh: boolean | undefined
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ capabilities: ['collect'], lastRefresh: 100, refresh: { state: 'done' }, fresh })
+  )
+  initScheduler({ dsManager, pullEngine })
+  await nextTurn()
+  assert.equal(getSourceSyncStatus(source).collector?.fresh, undefined)
+
+  fresh = false
+  t.mock.timers.tick(30_000)
+  await nextTurn()
+  assert.equal(getSourceSyncStatus(source).collector?.fresh, false)
+
+  fresh = true
+  t.mock.timers.tick(30_000)
+  await nextTurn()
+  assert.equal(getSourceSyncStatus(source).collector?.fresh, true)
 })

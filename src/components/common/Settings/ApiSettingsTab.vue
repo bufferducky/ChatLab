@@ -393,7 +393,7 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                     data-testid="source-sync-status"
                     class="flex flex-wrap gap-x-4 gap-y-1 border-b border-gray-100 px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
                   >
-                    <div v-if="ds.sync.collector" class="flex items-center gap-1.5">
+                    <div v-if="ds.sync.collector" class="flex flex-wrap items-center gap-x-1.5">
                       <dt>{{ t('settings.api.dataSources.health.lastCollection') }}</dt>
                       <dd class="tabular-nums">{{ formatTime(ds.sync.collector.lastRefresh) }}</dd>
                       <dd
@@ -403,6 +403,12 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                         }"
                       >
                         {{ t(`settings.api.dataSources.health.${ds.sync.collector.state}`) }}
+                      </dd>
+                      <dd
+                        v-if="ds.sync.collector.lastRefresh > 0 && ds.sync.collector.fresh === false"
+                        class="text-warning"
+                      >
+                        {{ t('settings.api.dataSources.health.stale') }}
                       </dd>
                     </div>
                     <div class="flex items-center gap-1.5">

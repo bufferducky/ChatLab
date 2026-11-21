@@ -557,6 +557,7 @@
     "dataSources": {
       "health": {
         "lastCollection": "最近採集成功",
+        "stale": "採集已過期",
         "pendingImports": "待補拉對話",
         "waitingForImport": "等待匯入，正在自動重試",
         "idle": "等待採集",

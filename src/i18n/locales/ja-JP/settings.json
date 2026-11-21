@@ -557,6 +557,7 @@
     "dataSources": {
       "health": {
         "lastCollection": "最終収集成功",
+        "stale": "収集が遅れています",
         "pendingImports": "再取得待ちのチャット",
         "waitingForImport": "インポート待ち。自動で再試行中",
         "idle": "収集待ち",

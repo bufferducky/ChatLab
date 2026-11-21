@@ -33,6 +33,7 @@ export interface SourceSyncStatus {
   collector?: {
     lastRefresh: number
     state: 'idle' | 'running' | 'done' | 'failed' | 'busy' | 'unavailable'
+    fresh?: boolean
   }
   lastSuccessfulPullAt: number
   pendingSessionIds: string[]
@@ -110,6 +111,8 @@ export interface SyncMeta {
   nextSince?: number
   nextOffset?: number
   watermark?: number
+  /** The source has completed initial preparation and this empty page can end the pull. */
+  emptyIsFinal?: boolean
 }
 
 export interface ImportResult {

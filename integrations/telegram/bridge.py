@@ -822,6 +822,8 @@ class Cache:
                     "SELECT value FROM state WHERE key='clock'"
                 ).fetchone()
                 sync["nextSince"] = max(since, int(clock[0]) if clock else 0)
+                if not messages and session["history_complete"]:
+                    sync["emptyIsFinal"] = True
             return {
                 "chatlab": {
                     "version": "0.0.2",

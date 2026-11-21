@@ -557,6 +557,7 @@
     "dataSources": {
       "health": {
         "lastCollection": "Last successful collection",
+        "stale": "Collection overdue",
         "pendingImports": "Pending imports",
         "waitingForImport": "Waiting to import. Retrying automatically.",
         "idle": "Waiting for collection",
