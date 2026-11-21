@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type {
+  AutomationDataSourceLike,
   AutomationRouteContext,
   AutomationRouteHostContext,
   AutomationSessionKind,
@@ -153,7 +154,10 @@ export function registerAutomationRoutes(server: FastifyInstance, ctx: Automatio
   server.get('/_web/automation/data-sources', async (_request, reply) => {
     const automation = requireAutomation(ctx)
     if (!automation) return reply.code(404).send({ error: 'Automation is not enabled' })
-    return automation.dsManager.loadAll()
+    const sources = automation.dsManager.loadAll()
+    const getSyncStatus = automation.getSourceSyncStatus
+    if (!getSyncStatus) return sources
+    return (sources as AutomationDataSourceLike[]).map((source) => ({ ...source, sync: getSyncStatus(source) }))
   })
 
   server.post<{

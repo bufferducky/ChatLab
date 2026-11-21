@@ -555,6 +555,16 @@
       "regenerate": "Regenerate"
     },
     "dataSources": {
+      "health": {
+        "lastCollection": "Last successful collection",
+        "pendingImports": "Pending imports",
+        "waitingForImport": "Waiting to import. Retrying automatically.",
+        "idle": "Waiting for collection",
+        "running": "Collecting",
+        "busy": "Collector busy",
+        "failed": "Collection failed",
+        "unavailable": "Bridge unavailable"
+      },
       "title": "Data Sources",
       "desc": "Configure external data source URLs. ChatLab will automatically pull and import chat data at the specified interval.",
       "empty": "No data sources",

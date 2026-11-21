@@ -165,10 +165,10 @@ export class WorkerImporter implements DataImporter {
 // ==================== BrowserWindowNotifier ====================
 
 export class BrowserWindowNotifier implements SyncNotifier {
-  onSessionListChanged(): void {
+  onSessionListChanged(localSessionId?: string): void {
     try {
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('api:importCompleted')
+        win.webContents.send('api:importCompleted', localSessionId)
       }
     } catch {
       /* ignore */

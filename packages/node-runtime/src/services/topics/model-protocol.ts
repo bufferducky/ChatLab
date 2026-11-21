@@ -12,6 +12,7 @@ import {
   type TopicModelOperation,
 } from './ledger'
 import type { TopicChatType, TopicSourceBlock } from './source'
+import { filterTopicBlock, filterTopicContext } from './content-filter'
 
 export const CHAT_TOPICS_PROMPT_VERSION = 'chat-topics-v4'
 export const CHAT_TOPICS_ALGORITHM_VERSION = 'chat-topics-ledger-v4'
@@ -25,6 +26,8 @@ export function buildTopicBlockPrompt(input: {
   block: TopicSourceBlock
   totalBlocks: number
   includeProgress?: boolean
+  strictContentFilter?: boolean
+  namespaceCurrentMessages?: boolean
 }): { systemPrompt: string; userPrompt: string } {
   const language = resolveOutputLanguage(input.locale)
   const chatGuidance = buildChatTypeGuidance(input.chatType)
@@ -47,12 +50,12 @@ Timezone: ${input.timezone}
 Block: ${input.block.index + 1}/${input.totalBlocks}
 
 Current ledger:
-${formatLedgerForModel(input.ledger)}
+${formatLedgerForModel(input.ledger, input.strictContentFilter)}
 
 Current messages:
-${formatBlockMessages(input.block, input.timezone)}
+${formatBlockMessages(filterTopicBlock(input.block, input.strictContentFilter), input.timezone, input.namespaceCurrentMessages)}
 
-Return: {"operations":[...],"assignments":[{"topicRef":"...","messageIds":[1,2]}]}. Every operation object MUST use the exact discriminator field "operation"; never use "op", "action", or another alias.
+Return: {"operations":[...],"assignments":[{"topicRef":"...","messageIds":${input.namespaceCurrentMessages ? JSON.stringify(input.block.messages.slice(0, 2).map((message) => `current:${message.id}`)) : '[1,2]'}}]}. ${input.namespaceCurrentMessages ? 'Copy the exact "current:<id>" message reference strings into evidence.messageId and assignments.messageIds. Historical references are context only and cannot be cited.' : ''} Every operation object MUST use the exact discriminator field "operation"; never use "op", "action", or another alias.
 Example create item: {"operation":"create","localId":"t1","title":"...","summary":"...","state":"active","evidence":[]${input.includeProgress ? ',"progress":"Concise new information from the cited current messages"' : ''}}.
 For append use operation, topicId, optional title, summary, evidence. For merge use operation, targetTopicId, sourceTopicIds, title, summary, state, evidence. For close/reopen use operation, topicId, optional title/summary, evidence. Every evidence item must include messageId, timestamp exactly as supplied, and role.
 ${input.includeProgress ? 'REQUIRED on every create, append, merge, close and reopen item: "progress" (string). Describe only NEW substantive information in the output language and cite current evidence for it; use "progress":"" for a repetition or wording-only change. Never omit this field. summary remains the complete current understanding.\n' : ''}\
@@ -66,6 +69,7 @@ export function buildTopicFinalizationPrompt(input: {
   timezone: string
   locale?: string
   ledger: TopicLedger
+  strictContentFilter?: boolean
 }): { systemPrompt: string; userPrompt: string } {
   const language = resolveOutputLanguage(input.locale)
   const chatKind = input.chatType === 'group' ? 'group chat' : 'private conversation'
@@ -75,19 +79,40 @@ export function buildTopicFinalizationPrompt(input: {
 Timezone: ${input.timezone}
 
 Ledger:
-${formatLedgerForModel(input.ledger)}
+${formatLedgerForModel(input.ledger, input.strictContentFilter)}
 
 Return {"overview":"...","topics":[{"id":"existing id","title":"...","summary":"...","state":"active|closed"}]}. Include each existing topic exactly once. The overview must clearly distinguish plans, unresolved questions, and confirmed events.`,
   }
 }
 
-export function parseTopicOperationsResponse(text: string): TopicModelBlockResponse {
+export function parseTopicOperationsResponse(text: string, currentMessageIds?: number[]): TopicModelBlockResponse {
   const payload = parseJsonObject(text)
   if (!Array.isArray(payload.operations) || payload.operations.length > 50) {
     throw new Error('Invalid topic operations payload')
   }
   if (!Array.isArray(payload.assignments) || payload.assignments.length > 100) {
     throw new Error('Invalid topic assignments payload')
+  }
+  if (currentMessageIds) {
+    const allowed = new Set(currentMessageIds)
+    const resolve = (reference: unknown): number => {
+      const id =
+        typeof reference === 'string' && /^current:[1-9]\d*$/u.test(reference)
+          ? Number(reference.slice('current:'.length))
+          : reference
+      if (typeof id !== 'number' || !Number.isSafeInteger(id) || !allowed.has(id)) {
+        throw new Error(`Evidence or assignment reference is not in the current block: ${String(reference)}`)
+      }
+      return id
+    }
+    for (const value of payload.operations) {
+      if (isRecord(value) && Array.isArray(value.evidence)) {
+        for (const evidence of value.evidence) if (isRecord(evidence)) evidence.messageId = resolve(evidence.messageId)
+      }
+    }
+    for (const value of payload.assignments) {
+      if (isRecord(value) && Array.isArray(value.messageIds)) value.messageIds = value.messageIds.map(resolve)
+    }
   }
   return {
     operations: payload.operations.map((value) => {
@@ -213,7 +238,7 @@ function parseJsonObject(text: string): Record<string, unknown> {
   return parsed
 }
 
-function formatLedgerForModel(ledger: TopicLedger): string {
+function formatLedgerForModel(ledger: TopicLedger, strict = false): string {
   if (ledger.topics.length === 0) return '(empty)'
   return JSON.stringify(
     ledger.topics.map((topic) => {
@@ -225,8 +250,8 @@ function formatLedgerForModel(ledger: TopicLedger): string {
       }
       return {
         id: topic.id,
-        title: topic.title,
-        summary: topic.summary,
+        title: filterTopicContext(topic.title, strict),
+        summary: filterTopicContext(topic.summary, strict),
         state: topic.state,
         messageCount: topic.messageIds.length,
         evidenceCount: topic.evidence.length,
@@ -237,7 +262,7 @@ function formatLedgerForModel(ledger: TopicLedger): string {
   )
 }
 
-function formatBlockMessages(block: TopicSourceBlock, timezone: string): string {
+function formatBlockMessages(block: TopicSourceBlock, timezone: string, namespaceCurrentMessages = false): string {
   const formatter = new Intl.DateTimeFormat('zh-CN', {
     timeZone: timezone,
     hour: '2-digit',
@@ -248,7 +273,7 @@ function formatBlockMessages(block: TopicSourceBlock, timezone: string): string 
   return block.messages
     .map((message) =>
       JSON.stringify({
-        messageId: message.id,
+        messageId: namespaceCurrentMessages ? `current:${message.id}` : message.id,
         timestamp: message.timestamp,
         localTime: formatter.format(new Date(message.timestamp * 1000)),
         sender: message.senderName,

@@ -7,6 +7,7 @@
 
 import * as fs from 'fs'
 import * as crypto from 'crypto'
+import timers from 'node:timers'
 import { NOOP_LOGGER } from './types'
 import type {
   DataSource,
@@ -25,6 +26,9 @@ import { DataSourceConfigError, type DataSourceManager } from './data-source-man
 
 const MAX_PAGES_PER_PULL = 5000
 const PULL_OVERLAP_SECONDS = 60
+const IMPORT_RETRY_MAX_DELAY_MS = 60_000
+const IMPORT_RETRY_DELAYS_MS = [2000, 5000, 15_000, 30_000, IMPORT_RETRY_MAX_DELAY_MS]
+const IMPORT_RETRY_WARNING_MS = 5 * 60_000
 const SOURCE_UNAVAILABLE_LOG_COOLDOWN_MS = 5 * 60 * 1000
 const SOURCE_UNAVAILABLE_ERROR_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'ABORT_ERR'])
 
@@ -186,9 +190,9 @@ export interface PullEngineOptions {
   fetcher: HttpFetcher
   importer: DataImporter
   notifier: SyncNotifier
-  dsManager: DataSourceManager
+  dsManager: Pick<DataSourceManager, 'get' | 'updateSession' | 'addSessions'>
   logger?: SyncLogger
-  /** Return true when an import is already in progress for the local session (skip pull) */
+  /** Return true when an import is already in progress for the local session. */
   isImporting?: (sessionId: string | undefined) => boolean
   /**
    * Called after a pull session completes successfully with the local session ID.
@@ -198,15 +202,32 @@ export interface PullEngineOptions {
   onSessionImported?: (localSessionId: string) => void
 }
 
+interface DeferredSession {
+  firstDeferredAt: number
+  nextAttemptAt: number
+  attempts: number
+}
+
+interface DeferredSource {
+  sessions: Map<string, DeferredSession>
+  timer?: ReturnType<typeof setTimeout>
+  running: boolean
+  warned: boolean
+}
+
 export class PullEngine {
   private fetcher: HttpFetcher
   private importer: DataImporter
   private notifier: SyncNotifier
-  private dsManager: DataSourceManager
+  private dsManager: PullEngineOptions['dsManager']
   private logger: SyncLogger
   private isImporting: (sessionId: string | undefined) => boolean
   private onSessionImported?: (localSessionId: string) => void
   private pullingSourceIds = new Set<string>()
+  private activeSessionPulls = new Map<string, Promise<PullSessionResult>>()
+  private importQueueTail = Promise.resolve()
+  private deferredSources = new Map<string, DeferredSource>()
+  private retryImports = true
   private progressMap = new Map<string, PullProgress>()
   private sourceUnavailableLogs = new Map<string, { detail: string; lastLoggedAt: number }>()
   private readonly sessionImportedListeners = new Set<(sessionId: string) => void>()
@@ -225,6 +246,11 @@ export class PullEngine {
     return Array.from(this.progressMap.values())
   }
 
+  getPendingImportSessionIds(sourceId: string): string[] {
+    const sessions = this.deferredSources.get(sourceId)?.sessions
+    return sessions ? Array.from(sessions.keys()) : []
+  }
+
   subscribeSessionImported(listener: (sessionId: string) => void): () => void {
     this.sessionImportedListeners.add(listener)
     return () => {
@@ -232,38 +258,174 @@ export class PullEngine {
     }
   }
 
-  private async importTempFile(baseUrl: string, sess: ImportSession, tempFile: string): Promise<ImportResult> {
-    let targetId = sess.targetSessionId
-    if (!targetId) {
-      const derived = deriveLocalSessionId(baseUrl, sess.remoteSessionId)
-      if (this.importer.sessionExists(derived)) {
-        targetId = derived
-        this.logger.info(`[Pull] Reusing existing local session ${derived} for "${sess.name}"`)
+  private importTempFile(baseUrl: string, sess: ImportSession, tempFile: string): Promise<ImportResult> {
+    const writePage = this.importQueueTail.then(() => {
+      const externalId = deriveLocalSessionId(baseUrl, sess.remoteSessionId)
+      let targetId = sess.targetSessionId
+      if (!targetId && this.importer.sessionExists(externalId)) {
+        targetId = externalId
+        this.logger.info(`[Pull] Reusing existing local session ${targetId} for "${sess.name}"`)
       }
-    }
-
-    const externalId = deriveLocalSessionId(baseUrl, sess.remoteSessionId)
-    return this.importer.importFile(tempFile, targetId || undefined, externalId)
+      return this.importer.importFile(tempFile, targetId || undefined, externalId)
+    })
+    // A rejected page must not prevent the next source's page from running.
+    this.importQueueTail = writePage.then(
+      () => {},
+      () => {}
+    )
+    return writePage
   }
 
-  private deferRetryableImport(sess: ImportSession, error?: string): PullSessionResult {
-    const errMsg = error || 'Import deferred'
-    this.logger.info(`[Pull] Deferring "${sess.name}": ${errMsg}`)
+  private deferRetryableImport(sess: ImportSession, newMessageCount: number, error?: string): PullSessionResult {
+    if (newMessageCount > 0) this.notifier.onSessionListChanged(sess.targetSessionId)
     this.markProgressDone(sess.id)
-    return { success: false, newMessageCount: 0, error: errMsg }
+    return { success: false, newMessageCount, error: error || 'Import deferred', retryable: true }
   }
 
-  async executePullSession(sourceId: string, ds: DataSource, sess: ImportSession): Promise<PullSessionResult> {
-    const currentDs = this.dsManager.get(sourceId)
-    if (!currentDs || !currentDs.sessions.some((s) => s.id === sess.id)) {
-      this.logger.info(`[Pull] Skipping "${sess.name}": session no longer exists`)
+  startImportRetries(): void {
+    this.retryImports = true
+  }
+
+  stopImportRetries(): void {
+    this.retryImports = false
+    for (const deferred of this.deferredSources.values()) timers.clearTimeout(deferred.timer)
+    this.deferredSources.clear()
+  }
+
+  private scheduleImportRetry(sourceId: string, sess: ImportSession, detail?: string): void {
+    if (!this.retryImports) return
+    let deferred = this.deferredSources.get(sourceId)
+    if (!deferred) {
+      deferred = { sessions: new Map(), running: false, warned: false }
+      this.deferredSources.set(sourceId, deferred)
+    }
+    if (deferred.sessions.has(sess.id)) return
+    const now = Date.now()
+    deferred.sessions.set(sess.id, {
+      firstDeferredAt: now,
+      nextAttemptAt: now + IMPORT_RETRY_DELAYS_MS[0],
+      attempts: 0,
+    })
+    this.logger.info(`[Pull] Deferring "${sess.name}": ${detail}; queued for retry`)
+    this.armImportRetry(sourceId, deferred)
+  }
+
+  private armImportRetry(sourceId: string, deferred: DeferredSource): void {
+    if (this.deferredSources.get(sourceId) !== deferred) return
+    timers.clearTimeout(deferred.timer)
+    if (deferred.sessions.size === 0) {
+      this.deferredSources.delete(sourceId)
+    } else if (!deferred.running) {
+      const next = Math.min(...Array.from(deferred.sessions.values(), (session) => session.nextAttemptAt))
+      deferred.timer = timers.setTimeout(
+        () => void this.retryDeferredSource(sourceId, deferred),
+        Math.max(0, next - Date.now())
+      )
+      deferred.timer.unref?.()
+    }
+  }
+
+  private async retryDeferredSource(sourceId: string, deferred: DeferredSource): Promise<void> {
+    if (this.deferredSources.get(sourceId) !== deferred) return
+    deferred.running = true
+    try {
+      const ds = this.dsManager.get(sourceId)
+      if (!ds?.enabled || ds.intervalMinutes < 1) {
+        deferred.sessions.clear()
+        return
+      }
+      const now = Date.now()
+      const oldest = Math.min(...Array.from(deferred.sessions.values(), (session) => session.firstDeferredAt))
+      if (!deferred.warned && now - oldest >= IMPORT_RETRY_WARNING_MS) {
+        deferred.warned = true
+        const attempts = Array.from(deferred.sessions.values()).reduce((sum, session) => sum + session.attempts, 0)
+        this.logger.warn(
+          `[Pull] Source ${sourceId}: ${deferred.sessions.size} sessions awaiting import retry, oldest since ${new Date(oldest).toISOString()}, ${attempts} retries`
+        )
+      }
+      for (const [sessionId, pending] of deferred.sessions) {
+        if (this.deferredSources.get(sourceId) !== deferred) break
+        if (pending.nextAttemptAt > now) continue
+        pending.attempts++
+        const result = await this.joinSessionPull(sourceId, sessionId, deferred)
+        const delay = IMPORT_RETRY_DELAYS_MS[Math.min(pending.attempts, IMPORT_RETRY_DELAYS_MS.length - 1)]
+        pending.nextAttemptAt = Date.now() + delay
+        if (result.sourceUnavailable && result.error) {
+          this.logSourceUnavailable(ds, result.error, deferred.sessions.size)
+          this.postponeSourceRetries(deferred)
+          break
+        }
+      }
+    } catch (error) {
+      this.logger.error(`[Pull] Import retry failed for source ${sourceId}`, error)
+      this.postponeSourceRetries(deferred)
+    } finally {
+      deferred.running = false
+      this.armImportRetry(sourceId, deferred)
+    }
+  }
+
+  private postponeSourceRetries(deferred: DeferredSource): void {
+    const next = Date.now() + IMPORT_RETRY_MAX_DELAY_MS
+    for (const pending of deferred.sessions.values()) pending.nextAttemptAt = Math.max(pending.nextAttemptAt, next)
+  }
+
+  private clearImportRetry(sourceId: string, sessionId: string, recovered = false): void {
+    const deferred = this.deferredSources.get(sourceId)
+    const pending = deferred?.sessions.get(sessionId)
+    if (!deferred || !pending) return
+    deferred.sessions.delete(sessionId)
+    if (recovered) {
+      this.logger.info(
+        `[Pull] Import recovered for ${sourceId}/${sessionId} after ${Date.now() - pending.firstDeferredAt}ms`
+      )
+    }
+    this.armImportRetry(sourceId, deferred)
+  }
+
+  executePullSession(sourceId: string, sessionId: string): Promise<PullSessionResult> {
+    return this.joinSessionPull(sourceId, sessionId)
+  }
+
+  private joinSessionPull(sourceId: string, sessionId: string, deferred?: DeferredSource): Promise<PullSessionResult> {
+    const key = `${sourceId}/${sessionId}`
+    const active = this.activeSessionPulls.get(key)
+    if (active) return active
+
+    const pull = Promise.resolve()
+      .then(() => this.runSessionPull(sourceId, sessionId, deferred))
+      .finally(() => this.activeSessionPulls.delete(key))
+    this.activeSessionPulls.set(key, pull)
+    return pull
+  }
+
+  private async runSessionPull(
+    sourceId: string,
+    sessionId: string,
+    deferred?: DeferredSource
+  ): Promise<PullSessionResult> {
+    const ds = this.dsManager.get(sourceId)
+    const sess = ds?.sessions.find((session) => session.id === sessionId)
+    if (!ds || !sess || (deferred && (!ds.enabled || ds.intervalMinutes < 1))) {
+      this.clearImportRetry(sourceId, sessionId)
       return { success: true, newMessageCount: 0 }
     }
+    if (deferred && this.deferredSources.get(sourceId) !== deferred) return { success: true, newMessageCount: 0 }
 
+    const result = await this.pullSession(ds, sess)
+    if (result.retryable && ds.enabled && ds.intervalMinutes >= 1) {
+      this.scheduleImportRetry(sourceId, sess, result.error)
+    } else if (result.success || !result.sourceUnavailable) {
+      this.clearImportRetry(sourceId, sess.id, result.success)
+    }
+    return result
+  }
+
+  private async pullSession(ds: DataSource, sess: ImportSession): Promise<PullSessionResult> {
+    const sourceId = ds.id
     const importStatusSessionId = sess.targetSessionId || deriveLocalSessionId(ds.baseUrl, sess.remoteSessionId)
     if (this.isImporting(importStatusSessionId)) {
-      this.logger.info(`[Pull] Skipping "${sess.name}": import in progress`)
-      return { success: false, newMessageCount: 0, error: 'Import in progress' }
+      return this.deferRetryableImport(sess, 0, 'Import in progress')
     }
 
     let totalNewMessages = 0
@@ -350,7 +512,7 @@ export class PullEngine {
                 }
 
                 if (!retryResult.success) {
-                  if (retryResult.retryable) return this.deferRetryableImport(sess, retryResult.error)
+                  if (retryResult.retryable) return this.deferRetryableImport(sess, totalNewMessages, retryResult.error)
 
                   const errMsg = retryResult.error || 'Import failed'
                   this.dsManager.updateSession(sourceId, sess.id, {
@@ -429,7 +591,7 @@ export class PullEngine {
           }
 
           if (!result.success) {
-            if (result.retryable) return this.deferRetryableImport(sess, result.error)
+            if (result.retryable) return this.deferRetryableImport(sess, totalNewMessages, result.error)
 
             const errMsg = result.error || 'Import failed'
             this.dsManager.updateSession(sourceId, sess.id, {
@@ -484,11 +646,12 @@ export class PullEngine {
       const savedLastPullAt = Math.max(sess.lastPullAt, Math.max(0, nextPullSince - PULL_OVERLAP_SECONDS))
       this.dsManager.updateSession(sourceId, sess.id, {
         lastPullAt: savedLastPullAt,
+        lastSuccessfulPullAt: Math.floor(Date.now() / 1000),
         lastStatus: 'success',
         lastNewMessages: totalNewMessages,
         lastError: '',
       })
-      if (totalNewMessages > 0) this.notifier.onSessionListChanged()
+      if (totalNewMessages > 0) this.notifier.onSessionListChanged(sess.targetSessionId)
       this.notifier.onPullResult(sourceId, sess.id, 'success', `+${totalNewMessages} messages`)
       this.markProgressDone(sess.id)
       if (this.onSessionImported && sess.targetSessionId) {
@@ -583,10 +746,10 @@ export class PullEngine {
     return this.dsManager.get(ds.id) ?? current
   }
 
-  async pullAllSessions(ds: DataSource): Promise<void> {
+  async pullAllSessions(ds: DataSource): Promise<boolean> {
     if (this.pullingSourceIds.has(ds.id)) {
       this.logger.info(`[Pull] Skipping pullAllSessions for "${ds.baseUrl}": pull already in progress`)
-      return
+      return false
     }
     this.pullingSourceIds.add(ds.id)
     try {
@@ -594,7 +757,7 @@ export class PullEngine {
       let sourceUnavailable = false
       for (let index = 0; index < ds.sessions.length; index++) {
         const sess = ds.sessions[index]
-        const result = await this.executePullSession(ds.id, ds, sess)
+        const result = await this.executePullSession(ds.id, sess.id)
         if (result.sourceUnavailable && result.error) {
           sourceUnavailable = true
           this.markRemainingSessionsSourceUnavailable(ds, index + 1, result.error)
@@ -603,6 +766,7 @@ export class PullEngine {
         }
       }
       if (!sourceUnavailable) this.sourceUnavailableLogs.delete(ds.id)
+      return !sourceUnavailable
     } finally {
       this.pullingSourceIds.delete(ds.id)
     }
@@ -657,7 +821,7 @@ export class PullEngine {
 
       for (let index = 0; index < targets.length; index++) {
         const session = targets[index]
-        const result = await this.executePullSession(sourceId, current, session)
+        const result = await this.executePullSession(sourceId, session.id)
         newMessages += result.newMessageCount
         if (!result.success && result.error) errors.push(`${session.name}: ${result.error}`)
         if (result.sourceUnavailable && result.error) {
@@ -682,7 +846,7 @@ export class PullEngine {
     if (sessionId) {
       const sess = ds.sessions.find((s) => s.id === sessionId)
       if (!sess) return { success: false, error: 'Session not found' }
-      const result = await this.executePullSession(sourceId, ds, sess)
+      const result = await this.executePullSession(sourceId, sess.id)
       if (result.sourceUnavailable && result.error) this.logSourceUnavailable(ds, result.error, 1)
       if (result.success) this.sourceUnavailableLogs.delete(ds.id)
       return { success: result.success, error: result.error }
@@ -699,7 +863,7 @@ export class PullEngine {
       let sourceUnavailable = false
       for (let index = 0; index < ds.sessions.length; index++) {
         const sess = ds.sessions[index]
-        const result = await this.executePullSession(sourceId, ds, sess)
+        const result = await this.executePullSession(sourceId, sess.id)
         if (!result.success && result.error) errors.push(`${sess.name}: ${result.error}`)
         if (result.sourceUnavailable && result.error) {
           sourceUnavailable = true

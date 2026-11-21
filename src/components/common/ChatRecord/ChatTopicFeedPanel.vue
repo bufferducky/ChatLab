@@ -48,6 +48,8 @@ const unreadCount = computed(
 )
 const status = computed(() => {
   if (active.value) return 'processing'
+  if (feed.value?.run?.status === 'failed') return 'failed'
+  if (feed.value?.run?.status === 'paused') return 'paused'
   if (feed.value && !feed.value.automationEnabled) return 'globallyDisabled'
   if (!feed.value?.modelConfigured) return 'noModel'
   if (!feed.value?.settings.enabled) return 'disabled'

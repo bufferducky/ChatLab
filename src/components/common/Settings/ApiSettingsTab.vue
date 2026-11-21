@@ -86,6 +86,17 @@ onUnmounted(() => {
   unlistenStartupError?.()
 })
 
+watch(
+  () => layoutStore.showSettings && layoutStore.settingsTab === 'api' && activeSubTab.value === 'sync',
+  (visible, _previous, onCleanup) => {
+    if (!visible) return
+    void store.fetchDataSources()
+    const timer = setInterval(() => void store.fetchDataSources(), 5000)
+    onCleanup(() => clearInterval(timer))
+  },
+  { immediate: true }
+)
+
 const maskedToken = computed(() => {
   if (!config.value.token) return ''
   return config.value.token.slice(0, 8) + '••••••••••••••••'
@@ -377,6 +388,36 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                     </div>
                   </div>
 
+                  <dl
+                    v-if="ds.sync && ds.enabled"
+                    data-testid="source-sync-status"
+                    class="flex flex-wrap gap-x-4 gap-y-1 border-b border-gray-100 px-3 py-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                  >
+                    <div v-if="ds.sync.collector" class="flex items-center gap-1.5">
+                      <dt>{{ t('settings.api.dataSources.health.lastCollection') }}</dt>
+                      <dd class="tabular-nums">{{ formatTime(ds.sync.collector.lastRefresh) }}</dd>
+                      <dd
+                        v-if="ds.sync.collector.state !== 'done'"
+                        :class="{
+                          'text-warning': ['failed', 'unavailable'].includes(ds.sync.collector.state),
+                        }"
+                      >
+                        {{ t(`settings.api.dataSources.health.${ds.sync.collector.state}`) }}
+                      </dd>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <dt>{{ t('settings.api.dataSources.lastSync') }}</dt>
+                      <dd class="tabular-nums">{{ formatTime(ds.sync.lastSuccessfulPullAt) }}</dd>
+                    </div>
+                    <div
+                      class="flex items-center gap-1.5"
+                      :class="{ 'text-warning': ds.sync.pendingSessionIds.length }"
+                    >
+                      <dt>{{ t('settings.api.dataSources.health.pendingImports') }}</dt>
+                      <dd class="tabular-nums">{{ ds.sync.pendingSessionIds.length }}</dd>
+                    </div>
+                  </dl>
+
                   <!-- Session items -->
                   <div v-if="sessions.length > 0" class="max-h-80 overflow-y-auto">
                     <div
@@ -391,11 +432,13 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                             :class="
                               pullingIds.has(sess.id)
                                 ? 'animate-pulse bg-blue-500'
-                                : sess.lastStatus === 'success'
-                                  ? 'bg-green-500'
-                                  : sess.lastStatus === 'error'
-                                    ? 'bg-red-500'
-                                    : 'bg-gray-400'
+                                : ds.sync?.pendingSessionIds.includes(sess.id)
+                                  ? 'bg-warning'
+                                  : sess.lastStatus === 'success'
+                                    ? 'bg-green-500'
+                                    : sess.lastStatus === 'error'
+                                      ? 'bg-red-500'
+                                      : 'bg-gray-400'
                             "
                           ></span>
                           <span class="text-sm font-medium text-gray-900 dark:text-white">{{ sess.name }}</span>
@@ -444,10 +487,13 @@ function subscribedRemoteIds(ds: DataSource): Set<string> {
                             {{ t('settings.api.dataSources.minutes') }}
                           </span>
                         </template>
-                        <template v-if="!pullingIds.has(sess.id) && sess.lastPullAt">
+                        <span v-if="ds.sync?.pendingSessionIds.includes(sess.id)" class="text-warning">
+                          {{ t('settings.api.dataSources.health.waitingForImport') }}
+                        </span>
+                        <template v-else-if="!pullingIds.has(sess.id) && (sess.lastSuccessfulPullAt || sess.lastError)">
                           <span class="text-gray-300 dark:text-gray-600">·</span>
-                          <span class="text-gray-400">
-                            {{ t('settings.api.dataSources.lastSync') }}: {{ formatTime(sess.lastPullAt) }}
+                          <span v-if="sess.lastSuccessfulPullAt" class="text-gray-400">
+                            {{ t('settings.api.dataSources.lastSync') }}: {{ formatTime(sess.lastSuccessfulPullAt) }}
                           </span>
                           <span v-if="sess.lastStatus === 'success'" class="text-green-500">
                             (+{{ sess.lastNewMessages }})

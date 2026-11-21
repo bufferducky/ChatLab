@@ -9,10 +9,12 @@ import type {
   ChatTopicRunStatus,
   ChatTopicAutomationSettings,
   ChatTopicFeedItem,
+  ChatTopicAnalysisGap,
 } from '@openchatlab/shared-types'
 import { openBetterSqliteDatabase } from '../../better-sqlite3-adapter'
 import { getChatTopicsDbPath } from './paths'
 import { DEFAULT_TOPIC_AUTOMATION, type LiveTopicSession } from './live'
+import { CONTENT_REVIEW_BLOCKED_PREFIX } from './content-filter'
 
 const CHAT_TOPICS_SCHEMA_VERSION = 3
 
@@ -221,6 +223,16 @@ export class ChatTopicStore {
       }))
   }
 
+  getLiveGaps(sessionId: string): ChatTopicAnalysisGap[] {
+    return this.db
+      .prepare(
+        `SELECT gap_json AS gapJson FROM topic_live_gap
+      WHERE session_id = ? ORDER BY created_at DESC, rowid DESC`
+      )
+      .all(sessionId)
+      .map((row) => JSON.parse(String(row.gapJson)))
+  }
+
   markLiveTopicsRead(sessionId: string, topics: Array<{ id: string; version: number }>): void {
     this.db.transaction(() => {
       for (const topic of topics) {
@@ -241,12 +253,21 @@ export class ChatTopicStore {
       cursor: number
       topics: ChatTopicFeedItem[]
       removedIds: string[]
+      gaps?: ChatTopicAnalysisGap[]
       now: number
     },
     guard: TopicExecutionLeaseGuard
   ): void {
     this.db.transaction(() => {
       this.assertExecutionLease(input.runId, guard)
+      for (const gap of input.gaps ?? []) {
+        this.db
+          .prepare(
+            `INSERT INTO topic_live_gap (id, session_id, gap_json, created_at)
+          VALUES (?, ?, ?, ?)`
+          )
+          .run(gap.id, input.sessionId, JSON.stringify(gap), gap.createdAt)
+      }
       for (const id of input.removedIds)
         this.db.prepare('DELETE FROM topic_live_topic WHERE session_id = ? AND id = ?').run(input.sessionId, id)
       for (const topic of input.topics) {
@@ -487,9 +508,10 @@ export class ChatTopicStore {
           last_error as lastError, created_at as createdAt, updated_at as updatedAt
         FROM topic_run
         WHERE status IN ('pending', 'running', 'paused')
+          AND NOT (status = 'paused' AND COALESCE(last_error, '') GLOB ?)
         ORDER BY created_at ASC LIMIT 1`
       )
-      .get() as TopicRunRow | undefined
+      .get(`${CONTENT_REVIEW_BLOCKED_PREFIX}*`) as TopicRunRow | undefined
     return row ?? null
   }
 
@@ -957,6 +979,14 @@ export class ChatTopicStore {
         automatic INTEGER NOT NULL,
         FOREIGN KEY (run_id) REFERENCES topic_run(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS topic_live_gap (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        gap_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES topic_live_session(session_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_topic_live_gap_session ON topic_live_gap(session_id, created_at DESC);
     `)
 
     if (version === 1) {

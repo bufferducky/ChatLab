@@ -3,7 +3,9 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -70,6 +72,12 @@ class ManualCollectionTests(unittest.TestCase):
                 self.assertTrue(finished.wait(2))
                 status = request("/api/v1/collect")
                 self.assertEqual((status["state"], status["changed"]), ("done", 1))
+                self.assertTrue(request("/health")["fresh"])
+                with patch("bridge.time.time", return_value=time.time() + 3601):
+                    health = request("/health")
+                self.assertTrue(health["ready"])
+                self.assertFalse(health["fresh"])
+                self.assertGreater(health["refreshAgeSeconds"], 3600)
                 messages = request(f"/api/v1/sessions/{sid}/messages")["messages"]
                 self.assertEqual(messages, [payload(1)])
             finally:

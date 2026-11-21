@@ -4,6 +4,7 @@
 export default {
   ai: {
     topics: {
+      contentReviewBlocked: '模型內容審核拒絕。此任務已暫停，請檢查內容後手動繼續。',
       reasoningLimitReached:
         '模型達到輸出上限，但僅回傳了思考內容，未產生話題結果。請更換快速模型，或使用支援關閉思考的介面。',
       outputLimitReached: '話題結果達到模型輸出上限，內容可能不完整。請更換快速模型後重試。',

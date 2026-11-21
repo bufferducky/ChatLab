@@ -1,4 +1,5 @@
 import { afterEach, describe, it } from 'node:test'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import * as os from 'os'
@@ -149,6 +150,112 @@ function createEngine(options: {
 }
 
 describe('PullEngine', () => {
+  it('gives another data source a write between pages when both scheduled pulls are active', async () => {
+    const qq = { ...createDataSource(), id: 'qq', sessions: [createSessionWithId('qq')] }
+    const telegram = { ...createDataSource(), id: 'telegram', sessions: [createSessionWithId('telegram')] }
+    const { promise: qqWriting, resolve: signalQqWriting } = Promise.withResolvers<void>()
+    const { promise: qqCanFinish, resolve: releaseQq } = Promise.withResolvers<void>()
+    const { promise: telegramFetched, resolve: signalTelegramFetched } = Promise.withResolvers<void>()
+    const writes: string[] = []
+    const fetcher: HttpFetcher = {
+      async fetchToTempFile(_url, remoteId, _token, params) {
+        const firstQqPage = remoteId === 'remote_qq' && params.since === 100
+        const timestamp = firstQqPage ? 200 : 400
+        if (remoteId === 'remote_telegram') signalTelegramFetched()
+        return writeTempJson({
+          messages: [{ timestamp }],
+          sync: { hasMore: firstQqPage, nextSince: timestamp },
+        })
+      },
+    }
+    const importer: DataImporter = {
+      sessionExists: () => true,
+      async importFile(file, targetId) {
+        const { messages } = JSON.parse(fs.readFileSync(file, 'utf8'))
+        const label = `${targetId}/${messages[0].timestamp}`
+        writes.push(label)
+        if (label === 'local_qq/200') {
+          signalQqWriting()
+          await qqCanFinish
+        }
+        return { success: true, newMessageCount: 1 }
+      },
+    }
+    const engine = new PullEngine({
+      fetcher,
+      importer,
+      notifier: { onSessionListChanged: () => {}, onPullResult: () => {} },
+      dsManager: {
+        get: (id: string) => (id === qq.id ? qq : telegram),
+        addSessions: () => [],
+        updateSession: (id: string, _sessionId: string, updates: Partial<ImportSession>) =>
+          Object.assign((id === qq.id ? qq : telegram).sessions[0], updates),
+      },
+    })
+
+    const first = engine.pullAllSessions(qq)
+    await qqWriting
+    const second = engine.pullAllSessions(telegram)
+    await telegramFetched
+    await nextTurn()
+    const writesWhileQqHeldTheLock = [...writes]
+    releaseQq()
+    await Promise.all([first, second])
+
+    assert.deepEqual(writesWhileQqHeldTheLock, ['local_qq/200'])
+    assert.deepEqual(writes, ['local_qq/200', 'local_telegram/400', 'local_qq/400'])
+    assert.equal(qq.sessions[0].lastPullAt, 340)
+    assert.equal(telegram.sessions[0].lastPullAt, 340)
+  })
+
+  it('merges a due retry with a manual pull and rereads the saved cursor', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+    const session = createSession()
+    const source = { ...createDataSource(), sessions: [session] }
+    const { promise: fetched, resolve: signalFetch } = Promise.withResolvers<void>()
+    const { promise: canFinish, resolve: releaseFetch } = Promise.withResolvers<void>()
+    let importing = true
+    const cursors: Array<number | undefined> = []
+    const engine = new PullEngine({
+      fetcher: {
+        async fetchToTempFile(_url, _id, _token, params) {
+          cursors.push(params.since)
+          signalFetch()
+          await canFinish
+          return writeTempJson({ messages: [{ timestamp: 900 }], sync: { hasMore: false, nextSince: 900 } })
+        },
+      },
+      importer: { sessionExists: () => true, importFile: async () => ({ success: true, newMessageCount: 1 }) },
+      notifier: { onSessionListChanged: () => {}, onPullResult: () => {} },
+      dsManager: {
+        get: () => source,
+        addSessions: () => [],
+        updateSession: (_id: string, _sessionId: string, updates: Partial<ImportSession>): ImportSession =>
+          Object.assign(session, updates),
+      },
+      isImporting: () => importing,
+    })
+
+    await engine.pullAllSessions(source)
+    assert.equal(session.lastPullAt, 100)
+    session.lastPullAt = 500
+    importing = false
+
+    const manual = engine.triggerPull(source.id, session.id)
+    await fetched
+    t.mock.timers.tick(2000)
+    const secondManual = engine.triggerPull(source.id, session.id)
+    await nextTurn()
+    releaseFetch()
+    assert.equal((await manual).success, true)
+    assert.equal((await secondManual).success, true)
+    t.mock.timers.tick(60_000)
+    await nextTurn()
+
+    assert.deepEqual(cursors, [500])
+    assert.equal(session.lastPullAt, 840)
+  })
+
   it('pulls only the selected sessions', async () => {
     const sessions = ['a', 'b', 'c'].map(createSessionWithId)
     const dataSource = { ...createDataSource(), sessions }
@@ -208,11 +315,11 @@ describe('PullEngine', () => {
     engine.subscribeSessionImported(() => {
       throw new Error('Post-import side effect failed')
     })
-    const first = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const first = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
     assert.equal(first.success, true)
     assert.deepEqual(notifications, [session.targetSessionId])
     unsubscribe()
-    const second = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const second = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
     assert.equal(second.success, true)
     assert.deepEqual(notifications, [session.targetSessionId])
   })
@@ -229,7 +336,7 @@ describe('PullEngine', () => {
       sessionUpdates: updates,
       importResult: { success: false, newMessageCount: 0, error: 'Empty page must not be imported' },
     })
-    const result = await engine.executePullSession(source.id, source, session)
+    const result = await engine.executePullSession(source.id, session.id)
     assert.equal(result.success, true)
     assert.equal(calls.length, 1)
     assert.equal(updates.at(-1)?.updates.lastPullAt, 4940)
@@ -299,7 +406,7 @@ describe('PullEngine', () => {
       return { success: true, newMessageCount: 1, sessionId: session.targetSessionId }
     }
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(result.newMessageCount, 1)
@@ -333,7 +440,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(result.newMessageCount, 1)
@@ -364,7 +471,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, false)
     assert.equal(result.error, 'error.import_in_progress')
@@ -403,7 +510,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, false)
     assert.equal(result.error, 'error.import_in_progress')
@@ -478,7 +585,7 @@ describe('PullEngine', () => {
         error: 'retry import failed',
       },
     })
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, false)
     assert.equal(result.error, 'retry import failed')
@@ -520,7 +627,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(fetchParams.length, 2)
@@ -552,7 +659,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(sessionUpdates.at(-1)?.updates.lastPullAt, 1940)
@@ -589,7 +696,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(sessionUpdates.at(-1)?.updates.lastPullAt, 4940)
@@ -621,7 +728,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(result.newMessageCount, 0)
@@ -654,7 +761,7 @@ describe('PullEngine', () => {
       },
     })
 
-    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, dataSource, session))
+    const result = await withImmediateTimers(() => engine.executePullSession(dataSource.id, session.id))
 
     assert.equal(result.success, true)
     assert.equal(result.newMessageCount, 0)

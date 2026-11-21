@@ -133,6 +133,20 @@ export interface ChatTopicFeedItem extends ChatTopic {
   updates: ChatTopicUpdate[]
 }
 
+export interface ChatTopicAnalysisGap {
+  id: string
+  runId: string
+  reason: 'local_filter' | 'input_review' | 'output_review' | 'content_review' | 'upstream_error' | 'invalid_response'
+  messageIds: number[]
+  startTs: number
+  endTs: number
+  createdAt: number
+  providerCode?: string
+  requestId?: string
+  contextTopicIds?: string[]
+  contextMessageIds?: number[]
+}
+
 export interface ChatTopicFeed {
   automationEnabled: boolean
   settings: ChatTopicAutomationSettings
@@ -143,4 +157,5 @@ export interface ChatTopicFeed {
   processedAt: number | null
   topics: ChatTopicFeedItem[]
   run: ChatTopicRun | null
+  gaps?: ChatTopicAnalysisGap[]
 }

@@ -44,6 +44,7 @@ import { createApiServer } from '@openchatlab/http-routes/server'
 import type { HttpRouteContext } from '@openchatlab/http-routes'
 import {
   reloadTimer,
+  getSourceSyncStatus,
   stopTimer,
   type CollectAndPullService,
   type DataSourceManager,
@@ -210,6 +211,7 @@ export async function startInternalServer(
       automation: {
         dsManager: dependencies.getDataSourceManager(),
         pullEngine: dependencies.getPullEngine(),
+        getSourceSyncStatus,
         collectAndPull: (sourceId, scope) => dependencies.getCollectAndPull().run(sourceId, scope),
         deleteSessionData: (sessionId) => routeDbManager.deleteSessionDatabaseFiles(sessionId),
         reloadTimer,

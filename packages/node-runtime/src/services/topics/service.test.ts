@@ -760,6 +760,33 @@ test('session deletion preparation waits for active topic work before primary de
   }
 })
 
+test('daily analysis omits an entirely filtered day without calling the model or deleting messages', async () => {
+  const model: ChatTopicModelClient = {
+    modelId: 'test/model',
+    async complete() {
+      assert.fail('A filtered day must not reach the provider')
+    },
+  }
+  const { root, service, manager } = createHarness(model, 1)
+  try {
+    const raw = new Database(path.join(root, 'data/databases/group.db'), { nativeBinding })
+    raw.prepare('UPDATE message SET content = ?').run('提供色情服务')
+    raw.close()
+    const run = service.start('group', { rangeKind: 'today', timezone: 'Asia/Shanghai', locale: 'zh-CN' })
+    await waitForRun(service, 'group', run.id, 'completed')
+    assert.equal(service.getRun('group', run.id)!.modelCalls, 0)
+    assert.deepEqual(service.getDay('group', '2026-08-09', 'Asia/Shanghai')!.topics, [])
+    const original = createDatabaseManagerAdapter(manager)
+      .ensureReadonly('group')
+      .prepare('SELECT content FROM message')
+      .get()
+    assert.equal(original?.content, '提供色情服务')
+  } finally {
+    service.close()
+    manager.closeAll()
+  }
+})
+
 async function waitForRun(service: ChatTopicService, sessionId: string, runId: string, status: 'completed' | 'failed') {
   await waitUntil(() => service.getRun(sessionId, runId)?.status === status)
   return service.getRun(sessionId, runId)!

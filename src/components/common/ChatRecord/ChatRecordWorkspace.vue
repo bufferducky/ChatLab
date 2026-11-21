@@ -6,7 +6,7 @@
  * summary timeline, and bidirectional scroll synchronization.
  */
 import { useLocalStorage } from '@vueuse/core'
-import { computed, nextTick, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, toRaw, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useToast } from '@/composables/useToast'
@@ -211,6 +211,16 @@ async function generateIndex() {
 watch([() => props.active, fallbackSessionId, () => props.initialQuery], () => initializeWorkspace(), {
   immediate: true,
 })
+
+let unlistenImportCompleted: (() => void) | undefined
+onMounted(() => {
+  unlistenImportCompleted = window.apiServerApi?.onImportCompleted((sessionId) => {
+    if (props.active && sessionId && sessionId === effectiveSessionId.value) {
+      messageListRef.value?.notifyMessagesImported()
+    }
+  })
+})
+onUnmounted(() => unlistenImportCompleted?.())
 </script>
 
 <template>

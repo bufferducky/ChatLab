@@ -4,6 +4,8 @@
 export default {
   ai: {
     topics: {
+      contentReviewBlocked:
+        'Model content review rejected this task. It is paused; review the content before resuming manually.',
       reasoningLimitReached:
         'The model reached its output limit with only reasoning and no topic result. Use a different fast model or an endpoint that supports disabling thinking.',
       outputLimitReached:

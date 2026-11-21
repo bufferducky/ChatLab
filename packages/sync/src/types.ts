@@ -22,9 +22,20 @@ export interface ImportSession {
   remoteSessionId: string
   targetSessionId: string
   lastPullAt: number
+  /** Wall-clock time (seconds) when the last pull completed successfully. */
+  lastSuccessfulPullAt?: number
   lastStatus: 'idle' | 'success' | 'error'
   lastError: string
   lastNewMessages: number
+}
+
+export interface SourceSyncStatus {
+  collector?: {
+    lastRefresh: number
+    state: 'idle' | 'running' | 'done' | 'failed' | 'busy' | 'unavailable'
+  }
+  lastSuccessfulPullAt: number
+  pendingSessionIds: string[]
 }
 
 export interface DataSource {
@@ -115,6 +126,7 @@ export interface PullSessionResult {
   success: boolean
   newMessageCount: number
   error?: string
+  retryable?: boolean
   sourceUnavailable?: boolean
 }
 
@@ -155,7 +167,7 @@ export interface DataImporter {
  * Electron uses BrowserWindow.webContents.send, Server can use SSE or noop.
  */
 export interface SyncNotifier {
-  onSessionListChanged(): void
+  onSessionListChanged(localSessionId?: string): void
   onPullResult(sourceId: string, sessionId: string | undefined, status: 'success' | 'error', detail: string): void
 }
 

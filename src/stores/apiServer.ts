@@ -36,6 +36,7 @@ export interface ImportSession {
   remoteSessionId: string
   targetSessionId: string
   lastPullAt: number
+  lastSuccessfulPullAt?: number
   lastStatus: 'idle' | 'success' | 'error'
   lastError: string
   lastNewMessages: number
@@ -51,6 +52,14 @@ export interface DataSource {
   enabled: boolean
   createdAt: number
   sessions: ImportSession[]
+  sync?: {
+    collector?: {
+      lastRefresh: number
+      state: 'idle' | 'running' | 'done' | 'failed' | 'busy' | 'unavailable'
+    }
+    lastSuccessfulPullAt: number
+    pendingSessionIds: string[]
+  }
 }
 
 export interface RemoteSession {

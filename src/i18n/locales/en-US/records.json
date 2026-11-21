@@ -13,6 +13,7 @@
     "indexLoadFailedDescription": "You can still read the original messages. Retry loading; existing summaries will not be changed."
   },
   "messageList": {
+    "newMessages": "New messages",
     "loading": "Loading...",
     "noMessages": "No messages",
     "tryAdjustFilter": "Try adjusting the filter",
@@ -176,7 +177,9 @@
       "sleeping": "Automatic summaries paused until scheduled hours",
       "waiting": "Waiting to process new messages",
       "caughtUp": "All pending messages processed",
-      "globallyDisabled": "Automatic summaries are off globally. Enable them in Settings → Automation."
+      "globallyDisabled": "Automatic summaries are off globally. Enable them in Settings → Automation.",
+      "failed": "Update failed; retry available",
+      "paused": "Update paused"
     }
   },
   "messageItem": {

@@ -343,7 +343,7 @@ interface ApiServerApi {
   setPort: (port: number) => Promise<ApiServerStatus>
   regenerateToken: () => Promise<ApiServerConfig>
   onStartupError: (callback: (data: { error: string }) => void) => () => void
-  onImportCompleted: (callback: () => void) => () => void
+  onImportCompleted: (callback: (localSessionId?: string) => void) => () => void
 }
 
 // Session index API has been migrated to shared HTTP routes (FetchSessionIndexAdapter).

@@ -555,6 +555,16 @@
       "regenerate": "重新產生"
     },
     "dataSources": {
+      "health": {
+        "lastCollection": "最近採集成功",
+        "pendingImports": "待補拉對話",
+        "waitingForImport": "等待匯入，正在自動重試",
+        "idle": "等待採集",
+        "running": "採集中",
+        "busy": "採集忙碌",
+        "failed": "採集失敗",
+        "unavailable": "無法連線到橋接服務"
+      },
       "title": "資料來源",
       "desc": "設定外部資料來源 URL，ChatLab 將按設定間隔自動拉取並匯入聊天資料。",
       "empty": "暫無資料來源",

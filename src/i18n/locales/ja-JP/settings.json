@@ -555,6 +555,16 @@
       "regenerate": "再生成"
     },
     "dataSources": {
+      "health": {
+        "lastCollection": "最終収集成功",
+        "pendingImports": "再取得待ちのチャット",
+        "waitingForImport": "インポート待ち。自動で再試行中",
+        "idle": "収集待ち",
+        "running": "収集中",
+        "busy": "収集サービスが処理中",
+        "failed": "収集失敗",
+        "unavailable": "ブリッジに接続できません"
+      },
       "title": "データソース",
       "desc": "外部データソースの URL を設定すると、ChatLab が指定間隔で自動的にチャットデータを取得・インポートします。",
       "empty": "データソースなし",

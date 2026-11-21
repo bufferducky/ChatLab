@@ -1,6 +1,6 @@
 export interface AutomationDataSourceLike {
   id: string
-  sessions: Array<{ id: string; targetSessionId?: string | null }>
+  sessions: Array<{ id: string; targetSessionId?: string | null; lastSuccessfulPullAt?: number }>
 }
 
 export type AutomationSessionKind = 'group' | 'private' | 'other'
@@ -43,6 +43,7 @@ export interface AutomationRouteContext {
     getProgress: () => unknown[]
   }
   collectAndPull?: (sourceId: string, scope: AutomationCollectScope) => Promise<unknown>
+  getSourceSyncStatus?: (source: AutomationDataSourceLike) => unknown
   serverInfo?: { port: number; host: string; socket?: string; token: string }
   deleteSessionData?: (sessionId: string) => void
   reloadTimer?: (sourceId: string, immediate?: boolean) => void

@@ -260,12 +260,15 @@ test('schema v2 stores add execution leases without losing existing runs', () =>
   initial.close()
 
   const legacy = new Database(dbPath, { nativeBinding })
-  legacy.exec("UPDATE topic_meta SET value = '2' WHERE key = 'schema_version'; DROP TABLE topic_execution_lease;")
+  legacy.exec(
+    "UPDATE topic_meta SET value = '2' WHERE key = 'schema_version'; DROP TABLE topic_execution_lease; DROP TABLE topic_live_gap;"
+  )
   legacy.close()
 
   const migrated = new ChatTopicStore(dbPath, { nativeBinding })
   try {
     assert.equal(migrated.getRun('run-1')?.status, 'completed')
+    assert.deepEqual(migrated.getLiveGaps('session-1'), [])
     const raw = new Database(dbPath, { nativeBinding })
     try {
       assert.equal(raw.prepare("SELECT value FROM topic_meta WHERE key = 'schema_version'").pluck().get(), '3')
@@ -363,6 +366,46 @@ test('schema v1 snapshots migrate without losing their legacy range fallback', (
     } finally {
       migrated.close()
     }
+  } finally {
+    store.close()
+  }
+})
+
+test('gaps and cursor commit together and a lost execution lease cannot skip messages', () => {
+  const root = makeTempDir()
+  const dbPath = getChatTopicsDbPath(root)
+  const store = new ChatTopicStore(dbPath, { nativeBinding })
+  try {
+    store.createRun(createRun())
+    store.ensureLiveSession('session-1', 1000)
+    store.tryAcquireExecutionLease('run-1', 'owner', 1000, 2000)
+    const batch = {
+      sessionId: 'session-1',
+      runId: 'run-1',
+      cursor: 42,
+      topics: [],
+      removedIds: [],
+      now: 1100,
+      gaps: [
+        {
+          id: 'gap-1',
+          runId: 'run-1',
+          reason: 'input_review' as const,
+          messageIds: [42],
+          startTs: 1,
+          endTs: 1,
+          createdAt: 1100,
+        },
+      ],
+    }
+    assert.throws(() => store.saveLiveBatch(batch, { ownerId: 'other', now: 1100 }), /lease was lost/)
+    assert.equal(store.getLiveSession('session-1')!.cursor, null)
+    assert.deepEqual(store.getLiveGaps('session-1'), [])
+    store.saveLiveBatch(batch, { ownerId: 'owner', now: 1100 })
+    assert.equal(store.getLiveSession('session-1')!.cursor, 42)
+    assert.deepEqual(store.getLiveGaps('session-1'), batch.gaps)
+    assert.throws(() => store.saveLiveBatch({ ...batch, cursor: 43 }, { ownerId: 'owner', now: 1100 }), /UNIQUE/)
+    assert.equal(store.getLiveSession('session-1')!.cursor, 42)
   } finally {
     store.close()
   }

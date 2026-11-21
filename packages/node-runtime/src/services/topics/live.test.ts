@@ -46,9 +46,12 @@ test('the continuous response example can create a topic with a readable develop
       totalBlocks: 1,
     })
     const example = JSON.parse(prompts.userPrompt.match(/Example create item: (\{[^\n]+\})\./)![1]!)
-    example.evidence = [{ messageId: message.id, timestamp: message.timestamp, role: 'primary' }]
+    example.evidence = [{ messageId: `current:${message.id}`, timestamp: message.timestamp, role: 'primary' }]
     const result = applyLiveTopicResponse({
-      text: JSON.stringify({ operations: [example], assignments: [{ topicRef: example.localId, messageIds: [1] }] }),
+      text: JSON.stringify({
+        operations: [example],
+        assignments: [{ topicRef: example.localId, messageIds: ['current:1'] }],
+      }),
       sessionId: 'group',
       settings: DEFAULT_TOPIC_AUTOMATION,
       candidates: [],
@@ -95,16 +98,22 @@ function harness(t: TestContext) {
   let fail = false
   let repetition = false
   let omitProgress = false
+  const replies: Array<Error | string> = []
+  const requests: Array<{ systemPrompt: string; userPrompt: string }> = []
   let afterCall: (() => void) | null = null
   const model: ChatTopicModelClient = {
     modelId: 'test',
     async complete(prompts) {
       calls += 1
+      requests.push(prompts)
+      const reply = replies.shift()
+      if (reply instanceof Error) throw reply
+      if (typeof reply === 'string') return { inputTokens: 1, outputTokens: 1, text: reply }
       if (fail) throw new Error('Model temporarily unavailable')
       const messages = prompts.userPrompt
         .split('\n')
         .filter((line) => line.startsWith('{"messageId":'))
-        .map((line) => JSON.parse(line) as { messageId: number; timestamp: number })
+        .map((line) => JSON.parse(line) as { messageId: number | string; timestamp: number })
       assert.ok(messages.length)
       const existingId = prompts.userPrompt.match(/"id":"(topic:[0-9a-f]+)"/)?.[1]
       const evidence = [{ messageId: messages[0]!.messageId, timestamp: messages[0]!.timestamp, role: 'primary' }]
@@ -165,6 +174,7 @@ function harness(t: TestContext) {
     get calls() {
       return calls
     },
+    requests,
     root,
     paths,
     manager,
@@ -180,6 +190,23 @@ function harness(t: TestContext) {
     },
     fail(value: boolean) {
       fail = value
+    },
+    rejectContent(count: number) {
+      replies.push(
+        ...Array.from(
+          { length: count },
+          () => new Error('data_inspection_failed: Input text data may contain inappropriate content.')
+        )
+      )
+    },
+    respond(...values: Array<Error | string>) {
+      replies.push(...values)
+    },
+    rename(name: string) {
+      db.prepare('UPDATE member SET account_name = ? WHERE id = 1').run(name)
+    },
+    originalContent(id: number) {
+      return db.prepare<[number], { content: string }>('SELECT content FROM message WHERE id = ?').get(id)?.content
     },
     repeat(value: boolean) {
       repetition = value
@@ -206,6 +233,197 @@ async function settle(service: ReturnType<typeof createChatTopicService>, status
   }
   assert.fail(`Run did not reach ${status}`)
 }
+
+test('topic requests exclude sensitive messages and names while keeping original chat records', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.rename('色情广告')
+  for (const [index, content] of [
+    '习近平相关消息',
+    '出售银行卡用于跑分洗钱',
+    '提供色情服务',
+    'Login callback fixed',
+  ].entries()) {
+    h.insert(index + 1, undefined, content)
+  }
+  h.service.noteSync('group')
+  await settle(h.service)
+  assert.equal(h.calls, 1)
+  assert.doesNotMatch(h.requests[0]!.userPrompt, /习近平|银行卡|跑分|色情/)
+  assert.deepEqual(h.service.getFeed('group').topics[0]!.messageIds, [4])
+  assert.equal(h.service.getFeed('group').pendingMessages, 0)
+  assert.deepEqual(h.service.getFeed('group').gaps?.[0]?.messageIds, [1, 2, 3])
+  assert.equal(h.service.getFeed('group').gaps?.[0]?.reason, 'local_filter')
+  assert.equal(h.originalContent(2), '出售银行卡用于跑分洗钱')
+})
+
+test('an entirely filtered batch advances without a model request and leaves no fabricated topic', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1, undefined, '提供色情服务')
+  h.service.noteSync('group')
+  await settle(h.service)
+  assert.equal(h.calls, 0)
+  assert.equal(h.service.getFeed('group').pendingMessages, 0)
+  assert.equal(h.service.getFeed('group').topics.length, 0)
+  assert.equal(h.originalContent(1), '提供色情服务')
+  h.time('2026-11-13T10:10:00+08:00')
+  h.insert(2)
+  h.service.noteSync('group')
+  await settle(h.service)
+  assert.deepEqual(h.service.getFeed('group').topics[0]!.messageIds, [2])
+})
+
+test('a review rejection permanently skips the block without retrying or changing previous topics', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1, undefined, 'Old representative context')
+  h.service.noteSync('group')
+  await settle(h.service)
+  const original = h.service.getFeed('group').topics[0]!
+  h.insert(2, undefined, 'Login callback fixed')
+  h.rejectContent(1)
+  await h.service.updateFeed('group')
+  const run = await settle(h.service)
+  assert.equal(h.calls, 2)
+  assert.equal(run.lastError, null)
+  const feed = h.service.getFeed('group')
+  assert.equal(feed.pendingMessages, 0)
+  assert.deepEqual(feed.topics, [original])
+  assert.deepEqual(feed.gaps?.[0]?.messageIds, [2])
+  assert.equal(h.originalContent(2), 'Login callback fixed')
+})
+
+test('historical representative evidence is filtered even when the current message is safe', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.service.noteSync('group')
+  await settle(h.service)
+  const raw = new Database(path.join(h.paths.getDatabaseDir(), 'group.db'), { nativeBinding })
+  raw.prepare('UPDATE message SET content = ? WHERE id = 1').run('提供色情服务')
+  raw.close()
+  h.time('2026-11-13T10:10:00+08:00')
+  h.insert(2)
+  h.service.noteSync('group')
+  await settle(h.service)
+  assert.doesNotMatch(h.requests[1]!.userPrompt, /色情/)
+  assert.equal(h.originalContent(1), '提供色情服务')
+})
+
+test('a review rejection stays skipped and later messages continue after restart', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.rejectContent(1)
+  h.service.noteSync('group')
+  await settle(h.service)
+  const feed = h.service.getFeed('group')
+  assert.equal(h.calls, 1)
+  assert.equal(feed.pendingMessages, 0)
+  assert.equal(feed.topics.length, 0)
+  assert.deepEqual(feed.gaps?.[0]?.messageIds, [1])
+  assert.equal(feed.gaps?.[0]?.reason, 'input_review')
+  h.restart()
+  h.service.tickAutomation()
+  assert.equal(await h.service.updateFeed('group'), null)
+  assert.equal(h.calls, 1)
+  h.time('2026-11-13T11:00:00+08:00')
+  h.insert(2)
+  h.service.noteSync('group')
+  await settle(h.service)
+  assert.equal(h.calls, 2)
+  assert.deepEqual(h.service.getFeed('group').topics[0]!.messageIds, [2])
+  assert.deepEqual(h.service.getFeed('group').gaps, feed.gaps)
+  assert.equal(h.originalContent(1), 'CPA callback login failure')
+})
+
+for (const text of [
+  'invalid JSON',
+  JSON.stringify({
+    operations: [{ operation: 'append', topicId: 'unknown', summary: 'Invalid reference', evidence: [] }],
+    assignments: [],
+  }),
+]) {
+  test(`an invalid model result is permanently skipped without correction: ${text}`, async (t) => {
+    const h = harness(t)
+    h.time('2026-11-13T10:00:00+08:00')
+    h.insert(1)
+    h.respond(text)
+    h.service.noteSync('group')
+    await settle(h.service)
+    assert.equal(h.calls, 1)
+    assert.equal(h.service.getFeed('group').pendingMessages, 0)
+    assert.equal(h.service.getFeed('group').topics.length, 0)
+    assert.equal(h.service.getFeed('group').gaps?.[0]?.reason, 'invalid_response')
+    h.restart()
+    assert.equal(await h.service.updateFeed('group'), null)
+    assert.equal(h.calls, 1)
+  })
+}
+
+test('a connection timeout preserves pending messages rather than treating them as invalid content', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.respond(new Error('Request timed out'))
+  h.service.noteSync('group')
+  const run = await settle(h.service, 'failed')
+  assert.match(run.lastError!, /timed out/)
+  assert.equal(h.service.getFeed('group').gaps?.length, 0)
+  h.service.tickAutomation()
+  assert.equal(h.calls, 1)
+  assert.equal(h.service.getFeed('group').pendingMessages, 1)
+})
+
+for (const error of [
+  'upstream_error: upstream stream failed after response started',
+  'upstream_error: stream interrupted after response started',
+]) {
+  test(`a failed stream is permanently skipped, including daily reanalysis: ${error}`, async (t) => {
+    const h = harness(t)
+    h.time('2026-11-13T10:00:00+08:00')
+    h.insert(1)
+    h.respond(new Error(error))
+    h.service.noteSync('group')
+    const run = await settle(h.service)
+    assert.equal(run.lastError, null)
+    assert.equal(h.calls, 1)
+    assert.equal(h.service.getFeed('group').pendingMessages, 0)
+    assert.equal(h.service.getFeed('group').topics.length, 0)
+    assert.equal(h.service.getFeed('group').gaps?.[0]?.reason, 'upstream_error')
+    h.restart()
+    h.service.noteSync('group')
+    assert.equal(await h.service.updateFeed('group'), null)
+    h.service.generateDay('group', '2026-11-13', 'Asia/Shanghai')
+    await settle(h.service)
+    assert.equal(h.calls, 1)
+    h.insert(2)
+    await h.service.updateFeed('group')
+    await settle(h.service)
+    assert.deepEqual(h.service.getFeed('group').topics[0]!.messageIds, [2])
+    assert.equal(h.calls, 2)
+    assert.equal(h.originalContent(1), 'CPA callback login failure')
+  })
+}
+
+test('an isolated middle block preserves previous results and continues the same run', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  for (let id = 1; id <= 400; id++) h.insert(id)
+  h.afterNextCall(() => h.respond(new Error('upstream_error: upstream stream failed after response started')))
+  h.service.noteSync('group')
+  const run = await settle(h.service)
+  const feed = h.service.getFeed('group')
+  assert.equal(run.completedBlocks, run.totalBlocks)
+  assert.equal(feed.pendingMessages, 0)
+  assert.equal(feed.gaps?.length, 1)
+  const skipped = feed.gaps![0]!.messageIds
+  const analyzed = feed.topics.flatMap((topic) => topic.messageIds)
+  assert.ok(analyzed.includes(1) && analyzed.includes(400))
+  assert.ok(skipped.every((id) => !analyzed.includes(id)))
+  assert.equal(analyzed.length + skipped.length, 400)
+})
 
 for (const replacement of ['closed', 'promoted to writable'] as const) {
   test(`a live update saves its model result when the shared connection is ${replacement} while awaiting it`, async (t) => {
@@ -466,6 +684,7 @@ test('live tables are additive to existing daily data and session deletion clear
   const h = harness(t)
   h.time('2026-11-13T10:00:00+08:00')
   h.insert(1)
+  h.insert(2, undefined, '提供色情服务')
   h.service.noteSync('group')
   await settle(h.service)
   h.service.close()
@@ -473,9 +692,11 @@ test('live tables are additive to existing daily data and session deletion clear
   try {
     assert.ok(store.getLiveSession('group'))
     assert.equal(store.getLiveTopics('group').length, 1)
+    assert.equal(store.getLiveGaps('group').length, 1)
     assert.equal(store.deleteSession('group'), true)
     assert.equal(store.getLiveSession('group'), null)
     assert.equal(store.getLiveTopics('group').length, 0)
+    assert.deepEqual(store.getLiveGaps('group'), [])
   } finally {
     store.close()
   }
@@ -514,4 +735,45 @@ test('manual update takes over an automatic run instead of failing with a global
   assert.equal(h.service.getRun('background', automatic.id)?.status, 'cancelled')
   await settle(h.service)
   assert.equal(h.service.getFeed('group').pendingMessages, 0)
+})
+
+test('output review is recorded distinctly and does not repeat the same input', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.respond(
+    Object.assign(new Error('DataInspectionFailed: Output text may contain inappropriate content'), {
+      request_id: 'review-request-123',
+      code: 'DataInspectionFailed',
+    })
+  )
+  h.service.noteSync('group')
+  await settle(h.service)
+  const gap = h.service.getFeed('group').gaps?.[0]
+  assert.equal(h.calls, 1)
+  assert.equal(gap?.reason, 'output_review')
+  assert.equal(gap?.requestId, 'review-request-123')
+  assert.equal(gap?.providerCode, 'DataInspectionFailed')
+})
+
+test('upgrading a legacy review pause processes its uncommitted messages through isolation', async (t) => {
+  const h = harness(t)
+  h.time('2026-11-13T10:00:00+08:00')
+  h.insert(1)
+  h.fail(true)
+  h.service.noteSync('group')
+  const failed = await settle(h.service, 'failed')
+  h.service.close()
+  const db = new Database(getChatTopicsDbPath(h.paths.getUserDataDir()), { nativeBinding })
+  db.prepare(
+    "UPDATE topic_run SET status = 'paused', last_error = 'content_review_blocked: legacy pause' WHERE id = ?"
+  ).run(failed.id)
+  db.close()
+  h.fail(false)
+  h.rejectContent(1)
+  h.restart()
+  h.service.tickAutomation()
+  await settle(h.service)
+  assert.equal(h.service.getFeed('group').pendingMessages, 0)
+  assert.equal(h.service.getFeed('group').gaps?.[0]?.reason, 'input_review')
 })

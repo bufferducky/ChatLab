@@ -4,6 +4,7 @@
 export default {
   ai: {
     topics: {
+      contentReviewBlocked: '模型内容审核拒绝。此任务已暂停，请检查内容后手动继续。',
       reasoningLimitReached:
         '模型达到输出上限，但仅返回了思考内容，未生成话题结果。请更换快速模型，或使用支持关闭思考的接口。',
       outputLimitReached: '话题结果达到模型输出上限，内容可能不完整。请更换快速模型后重试。',

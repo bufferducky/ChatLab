@@ -26,7 +26,98 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 DEFAULT_HOME = Path.home() / ".local/share/chatlab-telegram"
 BATCH_SIZE = 500
+REQUEST_TIMEOUT_SECONDS = 60
+CONNECT_TIMEOUT_SECONDS = 60
+DISCONNECT_TIMEOUT_SECONDS = 15
+NO_PROGRESS_TIMEOUT_SECONDS = 180
+MAX_COLLECTION_RETRIES = 2
+TRANSPORT_RETRY_SECONDS = 60
 _collection_metrics = ContextVar("telegram_collection_metrics", default=None)
+_collection_activity = ContextVar("telegram_collection_activity", default=None)
+
+
+class CollectionActivity:
+    """Extend the collection deadline only for its own progress or planned waits."""
+
+    def __init__(self, deadline, notify=None, attempt=0):
+        self.deadline = deadline
+        self.notify = notify
+        self.owner = asyncio.current_task()
+        self.attempt = attempt
+
+    def update(self, stage, *, request_type="", wait_seconds=0):
+        # SDK reconnect callbacks inherit context but do not advance collection.
+        if asyncio.current_task() is not self.owner:
+            return
+        self.deadline.reschedule(
+            asyncio.get_running_loop().time()
+            + NO_PROGRESS_TIMEOUT_SECONDS
+            + max(0, wait_seconds)
+        )
+        if self.notify:
+            self.notify(
+                stage=stage,
+                requestType=request_type,
+                lastProgressAt=int(time.time()),
+                waitUntil=int(time.time() + wait_seconds) if wait_seconds else 0,
+                attempt=self.attempt,
+            )
+
+
+def collection_progress(stage, **details):
+    activity = _collection_activity.get()
+    if activity is not None:
+        activity.update(stage, **details)
+
+
+def next_collection_delay(status, current, interval, now=None):
+    """Retry transport failures promptly without bypassing Telegram cooldowns."""
+    now = time.time() if now is None else now
+    interval = max(30, interval)
+    if current["state"] == "failed" or status["error"]:
+        interval = min(interval, TRANSPORT_RETRY_SECONDS)
+    last_attempt = max(
+        status["lastRefresh"], status["lastAttempt"], current["finishedAt"]
+    )
+    return max(0, interval - (now - last_attempt), status["retryAfter"] - now)
+
+
+async def collect_with_retries(root, config, cache, client, images=None, notify=None):
+    """Cancel stalled work before reconnecting and replay committed checkpoints."""
+    initial_messages = cache.status()["messages"]
+    for attempt in range(MAX_COLLECTION_RETRIES + 1):
+        try:
+            async with asyncio.timeout(NO_PROGRESS_TIMEOUT_SECONDS) as deadline:
+                activity = CollectionActivity(deadline, notify, attempt)
+                token = _collection_activity.set(activity)
+                try:
+                    if attempt:
+                        collection_progress("reconnecting")
+                        await client.reconnect()
+                    collection_progress("collecting")
+                    result = await refresh(root, config, cache, client, images)
+                    result["changedMessages"] = max(
+                        result.get("changedMessages", 0),
+                        cache.status()["messages"] - initial_messages,
+                    )
+                    return result
+                finally:
+                    _collection_activity.reset(token)
+        except OSError as error:
+            if attempt == MAX_COLLECTION_RETRIES:
+                raise
+            print(
+                json.dumps(
+                    {
+                        "event": "telegramCollectionRetry",
+                        "attempt": attempt + 1,
+                        "error": type(error).__name__,
+                    }
+                ),
+                flush=True,
+            )
+            # The failed refresh has already unwound; no orphan coroutine remains.
+            await asyncio.sleep(2**attempt)
 
 
 @contextlib.contextmanager
@@ -103,6 +194,10 @@ class CollectionController:
         with self.lock:
             return dict(self.status)
 
+    def progress(self, **details):
+        with self.lock:
+            self.status.update(details)
+
     def trigger(self):
         with self.lock:
             if self.status["state"] == "running":
@@ -113,6 +208,8 @@ class CollectionController:
                 "startedAt": int(time.time()),
                 "finishedAt": 0,
                 "changed": 0,
+                "lastProgressAt": int(time.time()),
+                "stage": "starting",
             }
             threading.Thread(target=self._run, daemon=True).start()
             return 202, dict(self.status)
@@ -127,6 +224,7 @@ class CollectionController:
         with self.lock:
             self.status.update(
                 state="failed" if error else "done",
+                stage="failed" if error else "done",
                 changed=changed,
                 error=error,
                 finishedAt=int(time.time()),
@@ -152,44 +250,71 @@ def make_client(root, config):
             self._app_config_at = 0
 
         async def connect(self):
-            async with self._connection_gate:
-                if not self.is_connected():
+            async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+                async with self._connection_gate:
+                    if not self.is_connected():
+                        await super().connect()
+
+        async def reconnect(self):
+            async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+                async with self._connection_gate:
+                    # Public disconnect() shields its task from cancellation. Await
+                    # the pinned SDK cleanup coroutine directly so the bound applies.
+                    async with asyncio.timeout(DISCONNECT_TIMEOUT_SECONDS):
+                        await self._disconnect_coro()
+                    # Telethon 1.45 only cancels already-sent states on disconnect.
+                    # Cancel unsent states before any new transport can resend them.
+                    queue = self._sender._send_queue._deque
+                    while queue:
+                        queue.popleft().future.cancel()
+                    self._app_config_at = 0
                     await super().connect()
+
+        async def _handle_auto_reconnect(self):
+            """History-only clients do not need update-subscription GetUsers probes.
+
+            Telethon spawns an untracked callback after every transport reconnect.
+            Sending each probe through history pacing can leave thousands of old
+            callbacks ahead of collection after repeated sleep/wake reconnects.
+            Pending RPC replay and keepalive remain managed by the SDK sender.
+            """
+            return
 
         async def ensure_media_connection(self):
             from telethon import functions, types
 
-            async with self._connection_gate:
-                if not self.is_connected():
-                    await super().connect()
-                if time.monotonic() < self._app_config_at:
-                    return
-                self.media_scheduler.check_cooldown()
+            await self.connect()
+            # Configuration RPCs must not hold the connection gate while collection
+            # pauses background media. Reserve the refresh before awaiting the RPC.
+            if time.monotonic() < self._app_config_at:
+                return
+            self.media_scheduler.check_cooldown()
+            self._app_config_at = time.monotonic() + 60
 
-                def decode(value):
-                    if isinstance(value, types.JsonObject):
-                        return {v.key: decode(v.value) for v in value.value}
-                    return getattr(value, "value", None)
+            def decode(value):
+                if isinstance(value, types.JsonObject):
+                    return {v.key: decode(v.value) for v in value.value}
+                return getattr(value, "value", None)
 
-                try:
-                    result = await self(functions.help.GetAppConfigRequest(hash=0))
-                    values = decode(result.config)
-                    self.media_scheduler.configure(
-                        values.get("small_queue_max_active_operations_count"),
-                        values.get("large_queue_max_active_operations_count"),
-                    )
-                    self._app_config_at = time.monotonic() + 3600
-                except MediaRateLimited:
-                    raise
-                except (
-                    OSError,
-                    TimeoutError,
-                    errors.RPCError,
-                    AttributeError,
-                    TypeError,
-                ):
-                    # One-at-a-time is the fallback until configuration is available.
-                    self._app_config_at = time.monotonic() + 60
+            try:
+                result = await self(functions.help.GetAppConfigRequest(hash=0))
+                values = decode(result.config)
+                self.media_scheduler.configure(
+                    values.get("small_queue_max_active_operations_count"),
+                    values.get("large_queue_max_active_operations_count"),
+                )
+                self._app_config_at = time.monotonic() + 3600
+            except MediaRateLimited:
+                raise
+            except (
+                OSError,
+                TimeoutError,
+                errors.RPCError,
+                AttributeError,
+                TypeError,
+            ):
+                # One-at-a-time is the fallback until configuration is available.
+                self._app_config_at = time.monotonic() + 60
 
         async def _get_cdn_client(self, redirect):
             client = await super()._get_cdn_client(redirect)
@@ -199,6 +324,7 @@ def make_client(root, config):
 
         async def _call(self, *args, **kwargs):
             request = args[1] if len(args) > 1 else kwargs.get("request")
+            request_type = type(request).__name__
             requests = request if isinstance(request, (list, tuple)) else [request]
             media = media_job.get() is not None or any(
                 type(r).__module__.endswith(".upload") for r in requests
@@ -210,17 +336,36 @@ def make_client(root, config):
                     self.media_scheduler.check_cooldown()
                 else:
                     # No media request holds or waits for the history gate.
-                    async with self._request_gate:
+                    collection_progress("request_slot", request_type=request_type)
+                    try:
+                        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                            await self._request_gate.acquire()
+                    except TimeoutError:
+                        print(
+                            json.dumps(
+                                {
+                                    "event": "telegramRequestTimeout",
+                                    "requestType": request_type,
+                                    "phase": "request_slot",
+                                }
+                            ),
+                            flush=True,
+                        )
+                        raise
+                    try:
                         while (
                             remaining := max(
                                 self._next_request_at - time.monotonic(),
                                 cache.status()["retryAfter"] - time.time(),
                             )
                         ) > 0:
+                            collection_progress("waiting", wait_seconds=remaining)
                             await asyncio.sleep(remaining)
                         self._next_request_at = time.monotonic() + max(
                             0, config.get("requestWaitSeconds", 3)
                         )
+                    finally:
+                        self._request_gate.release()
                 if metrics is not None:
                     metrics["pacingWaitSeconds"] += time.monotonic() - started
                     kind = type(request).__name__
@@ -229,7 +374,24 @@ def make_client(root, config):
                     if media:
                         async with self.media_scheduler.rpc():
                             return await super()._call(*args, **kwargs)
-                    return await super()._call(*args, **kwargs)
+                    collection_progress("request", request_type=request_type)
+                    try:
+                        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                            result = await super()._call(*args, **kwargs)
+                    except TimeoutError:
+                        print(
+                            json.dumps(
+                                {
+                                    "event": "telegramRequestTimeout",
+                                    "requestType": request_type,
+                                    "phase": "rpc",
+                                }
+                            ),
+                            flush=True,
+                        )
+                        raise
+                    collection_progress("received", request_type=request_type)
+                    return result
                 except (errors.FloodWaitError, errors.FloodPremiumWaitError) as error:
                     seconds = max(1, error.seconds)
                     cache.record_rate_limit(seconds)
@@ -745,9 +907,8 @@ async def discover(root, config):
 
 
 async def refresh(root, config, cache, shared_client=None, image_service=None):
-    from telethon import utils
-
     from image_media import image_metadata
+    from telethon import utils
 
     selected = config.get("selectedPeers", [])
     if not selected and not config.get("allDialogs"):
@@ -764,6 +925,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
         history_since = config.get("historySince", int(time.time()) - 7 * 86400)
         try:
             started = time.monotonic()
+            collection_progress("connecting")
             await client.connect()
             account = await client.get_me()
             if account is None:
@@ -772,6 +934,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
             metrics["connectionSeconds"] = time.monotonic() - started
             # Refresh entities once, so IDs and names are resolved without per-message RPCs.
             started = time.monotonic()
+            collection_progress("dialogs")
             dialogs = {str(d.id): d async for d in client.iter_dialogs()}
             metrics["dialogsSeconds"] = time.monotonic() - started
             metrics["discoveredDialogs"] = len(dialogs)
@@ -781,6 +944,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
             started = time.monotonic()
             metrics["cacheWriteSeconds"] = 0.0
             for peer in selected:
+                collection_progress("history")
                 dialog = dialogs.get(str(peer))
                 if dialog is None:
                     raise RuntimeError("SelectedConversationUnavailable")
@@ -828,6 +992,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                         if latest_id and message.id == latest_id:
                             break
                         continue
+                    collection_progress("history")
                     sender = getattr(message, "sender", None)
                     converted = convert_message(
                         message, utils.get_display_name(sender) if sender else None
@@ -869,6 +1034,7 @@ async def refresh(root, config, cache, shared_client=None, image_service=None):
                     if image_service:
                         image_service.wake_prefetch()
                 cache.finish_session(sid, latest_id)
+                collection_progress("committed")
             cache.finish()
             metrics["historySeconds"] = time.monotonic() - started
             return {"changedMessages": changed, **cache.status()}
@@ -931,6 +1097,12 @@ def make_server(cache, config, images=None, collection=None):
             path = urlsplit(self.path)
             if path.path == "/health":
                 status = cache.status()
+                age = max(0, int(time.time()) - status["lastRefresh"])
+                status.update(
+                    refreshAgeSeconds=age if status["lastRefresh"] else None,
+                    fresh=bool(status["lastRefresh"])
+                    and age <= max(180, 2 * config.get("interval", 1800)),
+                )
                 if collection is not None:
                     status.update(
                         capabilities=["collect"], refresh=collection.snapshot()
@@ -1142,12 +1314,21 @@ def main():
 
             worker = TelegramWorker(lambda: make_client(root, config), cache, config)
 
+        collection = None
+
         def collect():
             started = time.monotonic()
             try:
                 result = (
                     worker.run(
-                        refresh(root, config, cache, worker.client, worker.images)
+                        collect_with_retries(
+                            root,
+                            config,
+                            cache,
+                            worker.client,
+                            worker.images,
+                            collection.progress if collection else None,
+                        )
                     )
                     if worker
                     else asyncio.run(refresh(root, config, cache))
@@ -1164,8 +1345,17 @@ def main():
                 return result
             except Exception as error:
                 cache.fail(error)
+                current = collection.snapshot() if collection else {}
                 print(
-                    json.dumps({"refreshFailed": True, "error": type(error).__name__}),
+                    json.dumps(
+                        {
+                            "refreshFailed": True,
+                            "error": type(error).__name__,
+                            "stage": current.get("stage", ""),
+                            "requestType": current.get("requestType", ""),
+                            "lastProgressAt": current.get("lastProgressAt", 0),
+                        }
+                    ),
                     flush=True,
                 )
                 raise
@@ -1186,13 +1376,7 @@ def main():
             while not stop.is_set():
                 status = cache.status()
                 current = collection.snapshot()
-                # Manual rounds reset the timer too; restarts keep the persisted interval.
-                last_attempt = max(
-                    status["lastRefresh"], status["lastAttempt"], current["finishedAt"]
-                )
-                delay = max(
-                    0, max(30, config["interval"]) - (time.time() - last_attempt)
-                )
+                delay = next_collection_delay(status, current, config["interval"])
                 if current["state"] == "running":
                     stop.wait(1)
                 elif delay:

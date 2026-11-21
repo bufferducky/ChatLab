@@ -13,6 +13,7 @@
     "indexLoadFailedDescription": "原始聊天紀錄仍可查看。請重試載入，現有摘要不會被修改。"
   },
   "messageList": {
+    "newMessages": "有新訊息",
     "loading": "載入中...",
     "noMessages": "暫無訊息",
     "tryAdjustFilter": "嘗試調整篩選條件",
@@ -176,7 +177,9 @@
       "sleeping": "自動總結已暫停，時段內繼續",
       "waiting": "等待整理新訊息",
       "caughtUp": "待處理訊息已整理完成",
-      "globallyDisabled": "自動總結總開關已關閉，可在設定 → 自動化中開啟"
+      "globallyDisabled": "自動總結總開關已關閉，可在設定 → 自動化中開啟",
+      "failed": "整理失敗，可重試",
+      "paused": "整理已暫停"
     }
   },
   "messageItem": {

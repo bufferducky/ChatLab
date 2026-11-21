@@ -13,6 +13,7 @@
     "indexLoadFailedDescription": "原始聊天记录仍可查看。请重试加载，现有摘要不会被修改。"
   },
   "messageList": {
+    "newMessages": "有新消息",
     "loading": "加载中...",
     "noMessages": "暂无消息",
     "tryAdjustFilter": "尝试调整筛选条件",
@@ -176,7 +177,9 @@
       "sleeping": "自动总结已暂停，时段内继续",
       "waiting": "等待整理新消息",
       "caughtUp": "已整理完待处理消息",
-      "globallyDisabled": "自动总结总开关已关闭，可在设置 → 自动化中开启"
+      "globallyDisabled": "自动总结总开关已关闭，可在设置 → 自动化中开启",
+      "failed": "整理失败，可重试",
+      "paused": "整理已暂停"
     }
   },
   "messageItem": {

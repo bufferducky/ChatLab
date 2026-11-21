@@ -4,6 +4,8 @@
 export default {
   ai: {
     topics: {
+      contentReviewBlocked:
+        'モデルのコンテンツ審査で拒否されたため、このタスクを一時停止しました。内容を確認してから手動で再開してください。',
       reasoningLimitReached:
         'モデルが出力上限に達しましたが、思考内容のみが返され、トピックの結果は生成されませんでした。高速モデルを変更するか、思考を無効にできるエンドポイントを使用してください。',
       outputLimitReached:

@@ -17,6 +17,7 @@ import {
   stopAllTimers,
   reloadTimer,
   stopTimer,
+  getSourceSyncStatus,
 } from '@openchatlab/sync'
 import type { SyncLogger } from '@openchatlab/sync'
 import { registerAutomationRoutes } from '@openchatlab/http-routes'
@@ -78,6 +79,7 @@ export function initSync(
   const automation: AutomationRouteContext = {
     dsManager,
     pullEngine,
+    getSourceSyncStatus,
     collectAndPull: (sourceId, scope) => collectAndPull.run(sourceId, scope),
     serverInfo,
     deleteSessionData: (sessionId) => dbManager.deleteSessionDatabaseFiles(sessionId),

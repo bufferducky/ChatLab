@@ -22,6 +22,7 @@ export type {
   ImportResult,
   PullSessionResult,
   PullProgress,
+  SourceSyncStatus,
   HttpFetcher,
   DataImporter,
   SyncNotifier,
@@ -39,5 +40,5 @@ export { classifySession, fetchRemoteSessions } from './scope'
 export type { SessionKind } from './scope'
 export { CollectAndPullService } from './collect-and-pull'
 export type { CollectScope, CollectAndPullResult, CollectAndPullServiceOptions } from './collect-and-pull'
-export { initScheduler, stopAllTimers, stopTimer, reloadTimer } from './scheduler'
+export { initScheduler, stopAllTimers, stopTimer, reloadTimer, getSourceSyncStatus } from './scheduler'
 export type { SchedulerOptions } from './scheduler'

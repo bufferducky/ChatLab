@@ -47,8 +47,8 @@ export const apiServerApi = {
     return () => ipcRenderer.removeListener('api:startupError', handler)
   },
 
-  onImportCompleted: (callback: () => void): (() => void) => {
-    const handler = () => callback()
+  onImportCompleted: (callback: (localSessionId?: string) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, localSessionId?: string) => callback(localSessionId)
     ipcRenderer.on('api:importCompleted', handler)
     return () => ipcRenderer.removeListener('api:importCompleted', handler)
   },

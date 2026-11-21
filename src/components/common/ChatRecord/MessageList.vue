@@ -111,6 +111,10 @@ const isLoading = ref(false)
 const isLoadingMore = ref(false)
 const hasMoreBefore = ref(false)
 const hasMoreAfter = ref(false)
+const hasNewMessages = ref(false)
+const isRefreshingLatest = ref(false)
+let importRevision = 0
+let queryRevision = 0
 
 // 搜索模式相关状态
 const isSearchMode = ref(false)
@@ -166,6 +170,8 @@ let previousExternalMessageCount = 0
 
 // 初始加载消息
 async function loadInitialMessages() {
+  queryRevision++
+  hasNewMessages.value = false
   clearNavigationHighlight()
   // 外部模式：直接使用外部消息
   if (isExternalMode.value) {
@@ -280,6 +286,79 @@ async function loadInitialMessages() {
     isLoading.value = false
   }
 }
+
+function isNearLatest(): boolean {
+  const container = scrollContainerRef.value
+  return (
+    !hasMoreAfter.value && (!container || container.scrollHeight - container.scrollTop - container.clientHeight < 100)
+  )
+}
+
+function notifyMessagesImported() {
+  if (isExternalMode.value || isFiltered.value || props.query.endTs || props.query.scrollToMessageId) return
+  importRevision++
+  hasNewMessages.value = true
+  if (isNearLatest()) void refreshLatestMessages()
+}
+
+async function refreshLatestMessages(jumpToLatest = false) {
+  const sessionId = effectiveSessionId.value
+  if (!sessionId || isLoading.value || isLoadingMore.value || isRefreshingLatest.value) return
+
+  const revision = importRevision
+  const view = queryRevision
+  isRefreshingLatest.value = true
+  try {
+    const { filter } = buildFilterParams(props.query)
+    const service = useMessageService()
+    if (jumpToLatest) {
+      const recent = await service.getAllRecentMessages(sessionId, filter, 100)
+      if (view !== queryRevision) return
+      messages.value = mapMessages(recent.messages)
+      hasMoreBefore.value = recent.messages.length >= 100
+      hasMoreAfter.value = false
+    } else {
+      const added: ChatRecordMessage[] = []
+      let lastId = messages.value.at(-1)?.id
+      if (lastId === undefined) {
+        const recent = await service.getAllRecentMessages(sessionId, filter, 100)
+        if (view !== queryRevision) return
+        hasMoreBefore.value = recent.messages.length >= 100
+        added.push(...mapMessages(recent.messages))
+      } else {
+        let hasMore = true
+        while (hasMore) {
+          const page = await service.getMessagesAfter(sessionId, lastId, 100, filter)
+          if (view !== queryRevision || !isNearLatest()) return
+          const nextId = page.messages.at(-1)?.id
+          if (nextId === undefined || nextId === lastId) break
+          added.push(...mapMessages(page.messages))
+          lastId = nextId
+          hasMore = page.hasMore
+        }
+      }
+      messages.value = [...messages.value, ...added]
+    }
+
+    hasNewMessages.value = importRevision !== revision
+    emit('count-change', messages.value.length)
+    emit(
+      'message-timestamps-change',
+      messages.value.map((message) => message.timestamp)
+    )
+    await nextTick()
+    if (view === queryRevision) scrollToBottom()
+  } catch (error) {
+    console.error('Could not refresh imported messages:', error)
+  } finally {
+    isRefreshingLatest.value = false
+    if (hasNewMessages.value && importRevision !== revision && isNearLatest()) void refreshLatestMessages()
+  }
+}
+
+watch([isLoading, isLoadingMore], () => {
+  if (hasNewMessages.value && isNearLatest()) void refreshLatestMessages()
+})
 
 // 滚动到顶部
 function scrollToTop() {
@@ -651,12 +730,13 @@ onUnmounted(() => {
 // 暴露方法
 defineExpose({
   refresh: loadInitialMessages,
+  notifyMessagesImported,
   scrollToMessage,
 })
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-hidden bg-chat-bg dark:bg-chat-dark">
+  <div class="relative flex h-full flex-col overflow-hidden bg-chat-bg dark:bg-chat-dark">
     <div
       v-if="focusedSender"
       class="flex shrink-0 flex-col gap-1 border-b border-chat-divider px-4 py-2 text-xs dark:border-white/10"
@@ -792,6 +872,21 @@ defineExpose({
         </span>
         <span v-else class="text-xs text-gray-400">{{ t('records.messageList.scrollDownForMore') }}</span>
       </div>
+    </div>
+    <div
+      v-if="hasNewMessages && !isLoading"
+      class="absolute inset-x-0 bottom-4 z-10 flex justify-center pointer-events-none"
+    >
+      <UButton
+        class="pointer-events-auto shadow-sm"
+        color="primary"
+        size="sm"
+        icon="i-heroicons-arrow-down"
+        :loading="isRefreshingLatest"
+        @click="refreshLatestMessages(true)"
+      >
+        {{ t('records.messageList.newMessages') }}
+      </UButton>
     </div>
   </div>
 </template>

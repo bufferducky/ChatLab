@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createEmptyTopicLedger } from './ledger'
 import {
   buildTopicBlockPrompt,
   buildTopicFinalizationPrompt,
@@ -40,6 +41,32 @@ test('finalization parser validates topic states', () => {
       ),
     /state/
   )
+})
+
+test('both block and finalization prompts exclude sensitive historical titles and summaries', () => {
+  const ledger = createEmptyTopicLedger()
+  ledger.topics.push({
+    id: 'topic:1',
+    title: '政治评论',
+    summary: '提供色情服务',
+    state: 'active',
+    messageIds: [1],
+    evidence: [],
+  })
+  const common = { chatType: 'group' as const, dayKey: '2026-11-13', timezone: 'Asia/Shanghai', ledger }
+  const block = {
+    index: 0,
+    estimatedChars: 10,
+    messages: [{ id: 2, senderName: '每天摸2小时奶', timestamp: 1, type: 0, content: 'Login fixed' }],
+  }
+  for (const prompts of [
+    buildTopicBlockPrompt({ ...common, block, totalBlocks: 1 }),
+    buildTopicFinalizationPrompt(common),
+  ]) {
+    assert.doesNotMatch(prompts.userPrompt, /政治|色情|摸2小时奶/)
+    assert.match(prompts.userPrompt, /topic:1/)
+  }
+  assert.equal(ledger.topics[0]!.summary, '提供色情服务')
 })
 
 test('topic prompts preserve locale and encode untrusted messages as JSON lines', () => {
@@ -96,4 +123,27 @@ test('topic prompts preserve locale and encode untrusted messages as JSON lines'
   })
   assert.match(finalPrompt.systemPrompt, /Traditional Chinese/)
   assert.match(finalPrompt.systemPrompt, /group chat/)
+})
+
+test('namespaced current references resolve exactly and historical or unknown references cannot enter saved topics', () => {
+  const payload = (reference: string | number) =>
+    JSON.stringify({
+      operations: [
+        {
+          operation: 'create',
+          localId: 't1',
+          title: 'Fix',
+          summary: 'Fixed login',
+          state: 'active',
+          evidence: [{ messageId: reference, timestamp: 100, role: 'primary' }],
+        },
+      ],
+      assignments: [{ topicRef: 't1', messageIds: [reference] }],
+    })
+  const result = parseTopicOperationsResponse(payload('current:42'), [42])
+  assert.equal(result.operations[0]!.evidence[0]!.messageId, 42)
+  assert.deepEqual(result.assignments[0]!.messageIds, [42])
+  for (const reference of ['history:42', 'current:43', 43]) {
+    assert.throws(() => parseTopicOperationsResponse(payload(reference), [42]), /not in the current block/)
+  }
 })

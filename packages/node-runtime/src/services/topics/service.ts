@@ -7,9 +7,17 @@ import type {
   ChatTopicDay,
   ChatTopicPreflight,
   ChatTopicRun,
+  ChatTopicAnalysisGap,
   CreateChatTopicsRequest,
 } from '@openchatlab/shared-types'
 import { appLogger } from '../../logging/app-logger'
+import {
+  CONTENT_REVIEW_BLOCKED_PREFIX,
+  TopicContentReviewBlockedError,
+  filterTopicBlock,
+  filterTopicContext,
+  getContentReviewDiagnostic,
+} from './content-filter'
 import { createAiTranslate } from '../../ai/i18n'
 import { isRuntimeVersionAtLeast, raiseDataDirMinRuntimeVersion, type RuntimeIdentity } from '../../data-dir-compat'
 import type { SessionRuntimeAdapter } from '../adapters'
@@ -32,7 +40,13 @@ import {
   parseTopicOperationsResponse,
 } from './model-protocol'
 import { getChatTopicsDbPath } from './paths'
-import { createTopicPreflight, loadTopicSourceDay, type TopicSourceDay } from './source'
+import {
+  createTopicPreflight,
+  createTopicSourceSignature,
+  loadTopicSourceDay,
+  type TopicSourceDay,
+  type TopicSourceBlock,
+} from './source'
 import { ChatTopicStore, type TopicDayCheckpoint } from './store'
 import { assertValidTimezone, enumerateTopicDays, formatTopicDayKey } from './time'
 import { chatTopicWorkCoordinator } from './work-coordinator'
@@ -79,6 +93,12 @@ export interface ChatTopicService {
   getDay(sessionId: string, dayKey: string, timezone: string): ChatTopicDay | null
   deleteDay(sessionId: string, dayKey: string): boolean
   close(): void
+}
+
+class TopicInvalidResponseError extends Error {
+  constructor(cause: unknown) {
+    super('Invalid topic model response', { cause })
+  }
 }
 
 interface ActiveExecution {
@@ -169,6 +189,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       processedAt: state.processedAt,
       topics: store.getLiveTopics(sessionId),
       run: getLatestRun(sessionId),
+      gaps: store.getLiveGaps(sessionId),
     }
   }
 
@@ -261,6 +282,14 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       if (!canAutomate(state.settings)) continue
       try {
         const latest = store.getLatestRun(sessionId)
+        // Previous builds paused the whole conversation for review. Resume through the new
+        // isolation path once; the rejected block is then committed as a visible gap.
+        if (
+          latest?.rangeKind !== 'updates' &&
+          latest?.status === 'paused' &&
+          latest.lastError?.startsWith(CONTENT_REVIEW_BLOCKED_PREFIX)
+        )
+          continue
         if (
           latest?.rangeKind === 'updates' &&
           latest.status === 'cancelled' &&
@@ -312,7 +341,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
   function generateDay(sessionId: string, dayKey: string, timezone: string, locale?: string): ChatTopicRun {
     const modelClient = requireModelClient()
     assertValidTimezone(timezone)
-    const source = loadTopicSourceDay(deps.runtime.ensureReadonly(sessionId), dayKey, timezone)
+    const source = loadAnalysisSourceDay(sessionId, dayKey, timezone)
     return createAndLaunchRun({
       sessionId,
       rangeKind: 'day',
@@ -463,7 +492,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     assertValidTimezone(timezone)
     const snapshot = store.getDay(sessionId, dayKey)
     if (!snapshot) return null
-    const source = loadTopicSourceDay(deps.runtime.ensureReadonly(sessionId), dayKey, timezone)
+    const source = loadAnalysisSourceDay(sessionId, dayKey, timezone)
     store.refreshDayStatus(sessionId, dayKey, source.sourceSignature, timezone, now())
     return store.getDay(sessionId, dayKey)
   }
@@ -593,11 +622,21 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       }
       const latest = store.getRun(run.id) ?? run
       const requestedStatus = execution.requestedStatus
-      const status = requestedStatus === 'preempted' ? 'pending' : (requestedStatus ?? 'failed')
+      const reviewBlocked = error instanceof TopicContentReviewBlockedError
+      const status =
+        requestedStatus === 'preempted' ? 'pending' : (requestedStatus ?? (reviewBlocked ? 'paused' : 'failed'))
       const message = requestedStatus ? null : error instanceof Error ? error.message : String(error)
       if (latest.currentDay) markCurrentCheckpointFailed(latest, message)
       updateRun(latest, { status, lastError: message })
-      if (!requestedStatus) appLogger.error('chat-topics', 'chat topic generation failed', error)
+      if (!requestedStatus) {
+        if (reviewBlocked) {
+          appLogger.warn('chat-topics', 'topic batch paused by content review', {
+            runId: run.id,
+            sessionId: run.sessionId,
+            blockIndex: latest.currentBlockIndex,
+          })
+        } else appLogger.error('chat-topics', 'chat topic generation failed', error)
+      }
     }
   }
 
@@ -615,40 +654,89 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       signal.throwIfAborted()
       const settings = store.getLiveSession(run.sessionId)!.settings
       const candidates = selectLiveTopicCandidates(store.getLiveTopics(run.sessionId), block.messages)
-      const prompts = buildLiveTopicPrompt({
-        db: deps.runtime.ensureReadonly(run.sessionId),
-        sessionId: run.sessionId,
-        settings,
-        candidates,
-        block,
-        totalBlocks: blocks.length,
-      })
-      const result = await completeValidated(
-        run,
-        modelClient,
-        prompts,
-        signal,
-        (text) =>
-          applyLiveTopicResponse({
-            text,
-            sessionId: run.sessionId,
-            settings,
-            candidates,
-            block,
-            // Other services may close or replace the shared connection while awaiting the model.
-            db: deps.runtime.ensureReadonly(run.sessionId),
-            now: now(),
-          }),
-        `chat-topics:${run.sessionId}:continuous`
-      )
-      run = result.run
+      run = updateRun(run, { currentBlockIndex: block.index })
+      let filteredBlock = filterTopicBlock(block)
+      let contextMessageIds: number[] = []
+      let value: ReturnType<typeof applyLiveTopicResponse> = { topics: [], removedIds: [] }
+      const gaps: ChatTopicAnalysisGap[] = []
+      try {
+        const result = await completeValidated<ReturnType<typeof applyLiveTopicResponse>>(
+          run,
+          modelClient,
+          (strict) => {
+            filteredBlock = filterTopicBlock(block, strict)
+            logFilteredBlock(run, block, filteredBlock, strict)
+            if (!filteredBlock.messages.length) return { value: { topics: [], removedIds: [] } }
+            const prompts = buildLiveTopicPrompt({
+              db: deps.runtime.ensureReadonly(run.sessionId),
+              sessionId: run.sessionId,
+              settings,
+              candidates,
+              block: filteredBlock,
+              totalBlocks: blocks.length,
+              strictContentFilter: strict,
+            })
+            contextMessageIds = prompts.contextMessageIds
+            return {
+              prompts,
+              validate: (text: string) =>
+                applyLiveTopicResponse({
+                  text,
+                  sessionId: run.sessionId,
+                  settings,
+                  candidates,
+                  block: filteredBlock,
+                  // Obtain a current connection after awaiting the provider.
+                  db: deps.runtime.ensureReadonly(run.sessionId),
+                  now: now(),
+                }),
+            }
+          },
+          signal,
+          `chat-topics:${run.sessionId}:continuous`
+        )
+        run = result.run
+        value = result.value
+      } catch (error) {
+        signal.throwIfAborted()
+        const diagnostic =
+          error instanceof TopicContentReviewBlockedError
+            ? error.diagnostic
+            : error instanceof TopicInvalidResponseError
+              ? { reason: 'invalid_response' as const }
+              : error instanceof Error &&
+                  /(?:upstream stream failed|stream interrupted) after response started/iu.test(error.message)
+                ? { reason: 'upstream_error' as const, providerCode: 'upstream_error' }
+                : null
+        if (!diagnostic) throw error
+        // Usage may have been recorded by the validator before it rejected the response.
+        run = store.getRun(run.id) ?? run
+        gaps.push(
+          makeGap(run, filteredBlock.messages, {
+            ...diagnostic,
+            contextTopicIds: candidates.map((topic) => topic.id),
+            contextMessageIds,
+          })
+        )
+        appLogger.warn('chat-topics', 'topic block permanently skipped; continuing later messages', {
+          runId: run.id,
+          sessionId: run.sessionId,
+          blockIndex: block.index,
+          messageIds: filteredBlock.messages.map((message) => message.id),
+          ...diagnostic,
+        })
+      }
+      const includedIds = new Set(filteredBlock.messages.map((message) => message.id))
+      const excluded = block.messages.filter((message) => !includedIds.has(message.id))
+      if (excluded.length) gaps.push(makeGap(run, excluded, { reason: 'local_filter' }))
       signal.throwIfAborted()
       store.saveLiveBatch(
         {
           sessionId: run.sessionId,
           runId: run.id,
           cursor: Math.max(...block.messages.map((message) => message.id)),
-          ...result.value,
+          ...value,
+          gaps,
           now: now(),
         },
         executionLeaseGuard()
@@ -658,11 +746,42 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     return run
   }
 
+  function makeGap(
+    run: ChatTopicRun,
+    messages: TopicSourceBlock['messages'],
+    diagnostic: Pick<
+      ChatTopicAnalysisGap,
+      'reason' | 'providerCode' | 'requestId' | 'contextTopicIds' | 'contextMessageIds'
+    >
+  ): ChatTopicAnalysisGap {
+    return {
+      id: generateId(),
+      runId: run.id,
+      ...diagnostic,
+      messageIds: messages.map((message) => message.id),
+      startTs: Math.min(...messages.map((message) => message.timestamp)),
+      endTs: Math.max(...messages.map((message) => message.timestamp)),
+      createdAt: now(),
+    }
+  }
+
+  function loadAnalysisSourceDay(sessionId: string, dayKey: string, timezone: string): TopicSourceDay {
+    const source = loadTopicSourceDay(deps.runtime.ensureReadonly(sessionId), dayKey, timezone)
+    const skipped = new Set(store.getLiveGaps(sessionId).flatMap((gap) => gap.messageIds))
+    const messages = source.messages.filter((message) => !skipped.has(message.id))
+    return {
+      ...source,
+      messages,
+      blocks: chunkTopicMessages(messages),
+      sourceSignature: createTopicSourceSignature(messages, source.chatType),
+    }
+  }
+
   function buildRunPlan(run: ChatTopicRun, modelId: string): PlannedDay[] {
     // Use the persisted run boundary so a resumed task cannot silently expand after midnight or after a later import.
     const dayKeys = enumerateTopicDays(run.startDay, run.endDay)
     return dayKeys.flatMap((dayKey) => {
-      const source = loadTopicSourceDay(deps.runtime.ensureReadonly(run.sessionId), dayKey, run.timezone)
+      const source = loadAnalysisSourceDay(run.sessionId, dayKey, run.timezone)
       if (source.messages.length === 0) return []
       const checkpoint = store.getCheckpoint(run.sessionId, dayKey)
       const snapshot = store.getDay(run.sessionId, dayKey)
@@ -686,7 +805,7 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     signal: AbortSignal
   ): Promise<{ run: ChatTopicRun }> {
     let run = updateRun(initialRun, { currentDay: plan.dayKey, currentBlockIndex: 0 })
-    const source = loadTopicSourceDay(deps.runtime.ensureReadonly(run.sessionId), plan.dayKey, run.timezone)
+    const source = loadAnalysisSourceDay(run.sessionId, plan.dayKey, run.timezone)
     if (source.sourceSignature !== plan.sourceSignature) {
       run = updateRun(run, { totalBlocks: run.totalBlocks - plan.totalBlocks + source.blocks.length })
     }
@@ -701,27 +820,34 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
       signal.throwIfAborted()
       run = updateRun(run, { currentBlockIndex: index })
       const block = source.blocks[index]!
-      const prompts = buildTopicBlockPrompt({
-        chatType: source.chatType,
-        dayKey: source.dayKey,
-        timezone: source.timezone,
-        locale: run.locale ?? undefined,
-        ledger,
-        block,
-        totalBlocks: source.blocks.length,
-      })
-      const result = await completeValidated(
+      const result = await completeValidated<TopicLedger>(
         run,
         modelClient,
-        prompts,
+        (strict) => {
+          const filteredBlock = filterTopicBlock(block, strict)
+          logFilteredBlock(run, block, filteredBlock, strict)
+          if (!filteredBlock.messages.length) return { value: ledger }
+          return {
+            prompts: buildTopicBlockPrompt({
+              chatType: source.chatType,
+              dayKey: source.dayKey,
+              timezone: source.timezone,
+              locale: run.locale ?? undefined,
+              ledger,
+              block: filteredBlock,
+              totalBlocks: source.blocks.length,
+              strictContentFilter: strict,
+            }),
+            validate: (text: string) =>
+              applyTopicOperations(ledger, parseTopicOperationsResponse(text), {
+                sessionId: run.sessionId,
+                dayKey: source.dayKey,
+                localIdNamespace: `block:${block.index}`,
+                currentMessages: filteredBlock.messages,
+              }),
+          }
+        },
         signal,
-        (text) =>
-          applyTopicOperations(ledger, parseTopicOperationsResponse(text), {
-            sessionId: run.sessionId,
-            dayKey: source.dayKey,
-            localIdNamespace: `block:${block.index}`,
-            currentMessages: block.messages,
-          }),
         `chat-topics:${run.sessionId}:${source.dayKey}`
       )
       run = result.run
@@ -732,26 +858,34 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
 
     signal.throwIfAborted()
     run = updateRun(run, { currentBlockIndex: null })
-    const finalPrompts = buildTopicFinalizationPrompt({
-      chatType: source.chatType,
-      dayKey: source.dayKey,
-      timezone: source.timezone,
-      locale: run.locale ?? undefined,
-      ledger,
-    })
-    const finalResult = await completeValidated(
+    const finalResult = await completeValidated<{
+      finalization: ReturnType<typeof parseTopicFinalizationResponse>
+      ledger: TopicLedger
+    }>(
       run,
       modelClient,
-      finalPrompts,
-      signal,
-      (text) => {
-        const finalization = parseTopicFinalizationResponse(text)
-        return { finalization, ledger: applyTopicFinalization(ledger, finalization) }
+      (strict) => {
+        if (!ledger.topics.length) return { value: { finalization: { overview: '', topics: [] }, ledger } }
+        return {
+          prompts: buildTopicFinalizationPrompt({
+            chatType: source.chatType,
+            dayKey: source.dayKey,
+            timezone: source.timezone,
+            locale: run.locale ?? undefined,
+            ledger,
+            strictContentFilter: strict,
+          }),
+          validate: (text: string) => {
+            const finalization = parseTopicFinalizationResponse(text)
+            return { finalization, ledger: applyTopicFinalization(ledger, finalization) }
+          },
+        }
       },
+      signal,
       `chat-topics:${run.sessionId}:${source.dayKey}`
     )
     run = finalResult.run
-    const currentSource = loadTopicSourceDay(deps.runtime.ensureReadonly(run.sessionId), source.dayKey, source.timezone)
+    const currentSource = loadAnalysisSourceDay(run.sessionId, source.dayKey, source.timezone)
     if (currentSource.sourceSignature !== source.sourceSignature) {
       throw new Error('Chat messages changed during topic generation; retry is required')
     }
@@ -782,17 +916,41 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
     return { run }
   }
 
+  function logFilteredBlock(
+    run: ChatTopicRun,
+    original: TopicSourceBlock,
+    filtered: TopicSourceBlock,
+    strict: boolean
+  ): void {
+    if (original.messages.length === filtered.messages.length) return
+    appLogger.info('chat-topics', 'topic input messages omitted by content filter', {
+      runId: run.id,
+      sessionId: run.sessionId,
+      blockIndex: original.index,
+      firstMessageId: original.messages[0]?.id,
+      lastMessageId: original.messages.at(-1)?.id,
+      omittedMessages: original.messages.length - filtered.messages.length,
+      strict,
+    })
+  }
+
   async function completeValidated<T>(
     initialRun: ChatTopicRun,
     modelClient: ChatTopicModelClient,
-    prompts: { systemPrompt: string; userPrompt: string },
+    prepare: (strict: boolean) =>
+      | {
+          prompts: { systemPrompt: string; userPrompt: string }
+          validate: (text: string) => T
+        }
+      | { value: T },
     signal: AbortSignal,
-    validate: (text: string) => T,
     sessionId: string
   ): Promise<{ run: ChatTopicRun; value: T }> {
     let run = initialRun
     let lastValidationError: unknown
+    let strict = false
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      signal.throwIfAborted()
       if (run.rangeKind === 'updates' && store.isLiveRunAutomatic(run.id)) {
         const settings = store.getLiveSession(run.sessionId)!.settings
         if (!canAutomate(settings)) {
@@ -800,28 +958,67 @@ export function createChatTopicService(deps: ChatTopicServiceDeps): ChatTopicSer
           throw new Error('Automatic topic updates are disabled or outside the configured schedule')
         }
       }
-      const attemptPrompts =
-        attempt === 0
-          ? prompts
-          : {
-              ...prompts,
-              userPrompt: `${prompts.userPrompt}\n\nYour previous response was invalid: ${validationErrorMessage(lastValidationError)}. Return corrected compact JSON only. Stay below 4096 output tokens, keep at most 4 representative evidence items per operation, and include the complete assignments array with current-block message IDs.`,
-            }
-      const response = await modelClient.complete(attemptPrompts, { signal, sessionId })
+      const prepared = prepare(strict)
+      if ('value' in prepared) return { run, value: prepared.value }
+      const prompts = prepared.prompts
+      const attemptPrompts = lastValidationError
+        ? {
+            ...prompts,
+            userPrompt: `${prompts.userPrompt}\n\nYour previous response was invalid: ${filterTopicContext(validationErrorMessage(lastValidationError), strict)}. Return corrected compact JSON only. Stay below 4096 output tokens, keep at most 4 representative evidence items per operation, and include the complete assignments array with current-block message IDs.`,
+          }
+        : prompts
+      let response: ChatTopicModelResult
+      try {
+        response = await modelClient.complete(attemptPrompts, { signal, sessionId })
+      } catch (error) {
+        signal.throwIfAborted()
+        const diagnostic = getContentReviewDiagnostic(error)
+        if (!diagnostic) throw error
+        if (run.rangeKind === 'updates' || strict || diagnostic.reason === 'output_review') {
+          throw contentReviewBlocked(run, diagnostic, error)
+        }
+        strict = true
+        // Content recovery has its own single retry, even after a JSON validation retry.
+        attempt -= 1
+        lastValidationError = undefined
+        appLogger.warn('chat-topics', 'content review rejected topic input; retrying with reduced context', {
+          runId: run.id,
+          sessionId: run.sessionId,
+          blockIndex: run.currentBlockIndex,
+          ...diagnostic,
+        })
+        continue
+      }
       run = recordModelUsage(run, response)
       if (response.outputLimit) {
         const t = createAiTranslate(run.locale ?? undefined)
-        throw new Error(
+        const error = new Error(
           t(response.outputLimit === 'reasoning' ? 'ai.topics.reasoningLimitReached' : 'ai.topics.outputLimitReached')
         )
+        throw run.rangeKind === 'updates' ? new TopicInvalidResponseError(error) : error
       }
       try {
-        return { run, value: validate(response.text) }
+        return { run, value: prepared.validate(response.text) }
       } catch (error) {
+        if (run.rangeKind === 'updates') throw new TopicInvalidResponseError(error)
+        if (strict) throw error
         lastValidationError = error
       }
     }
     throw lastValidationError instanceof Error ? lastValidationError : new Error('Invalid topic model response')
+  }
+
+  function contentReviewBlocked(
+    run: ChatTopicRun,
+    diagnostic: NonNullable<ReturnType<typeof getContentReviewDiagnostic>>,
+    cause: unknown
+  ): TopicContentReviewBlockedError {
+    const t = createAiTranslate(run.locale ?? undefined)
+    return new TopicContentReviewBlockedError(
+      `${CONTENT_REVIEW_BLOCKED_PREFIX} ${t('ai.topics.contentReviewBlocked')} (${diagnostic.providerCode}${diagnostic.requestId ? `; requestId=${diagnostic.requestId}` : ''})`,
+      diagnostic,
+      cause
+    )
   }
 
   function recordModelUsage(run: ChatTopicRun, result: ChatTopicModelResult): ChatTopicRun {

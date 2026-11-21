@@ -555,6 +555,16 @@
       "regenerate": "重新生成"
     },
     "dataSources": {
+      "health": {
+        "lastCollection": "最近采集成功",
+        "pendingImports": "待补拉会话",
+        "waitingForImport": "等待导入，正在自动重试",
+        "idle": "等待采集",
+        "running": "采集中",
+        "busy": "采集繁忙",
+        "failed": "采集失败",
+        "unavailable": "桥接服务不可达"
+      },
       "title": "数据源",
       "desc": "配置外部数据源 URL，ChatLab 将按设定间隔自动拉取并导入聊天数据。",
       "empty": "暂无数据源",

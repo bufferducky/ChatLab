@@ -300,6 +300,7 @@ export type {
   ChatTopicGlobalAutomationSettings,
   ChatTopicUpdate,
   ChatTopicFeedItem,
+  ChatTopicAnalysisGap,
   ChatTopicFeed,
   ChatTopicAssignmentMode,
   ChatTopicDay,
